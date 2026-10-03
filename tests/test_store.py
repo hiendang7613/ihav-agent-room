@@ -421,6 +421,12 @@ class StoreTests(unittest.TestCase):
             self.store.project_views()
         self.assertEqual(target.read_text(), "Concurrent user note")
 
+    def test_projection_written_before_the_rename_is_replaced(self):
+        target = self.project / "agents_space/state/current_decisions.md"
+        target.write_text("<!-- agent-room generated; update through agent-room CLI -->\n# Decisions and open questions\n")
+        self.store.project_views()
+        self.assertTrue(target.read_text().startswith("<!-- ihav-agent-room generated; update through ihav-agent-room CLI -->\n"))
+
     def test_scope_escape_is_rejected(self):
         with self.assertRaises(RoomError):
             self.task(scope=["../outside.py"])

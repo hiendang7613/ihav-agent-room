@@ -65,6 +65,9 @@ def validate_fields(data, text=(), lists=()):
             raise RoomError(f"{key} must be an array of nonempty strings")
 
 
+LEGACY_PROJECTION_HEADER = "<!-- agent-room generated; update through agent-room CLI -->\n"
+
+
 class Store:
     def __init__(self, project):
         self.project = Path(project).resolve()
@@ -1607,6 +1610,7 @@ class Store:
                     notes.append(f"## {note['id']} — {note['state']}\n\n{note['body']}\n\nAnswer: {note.get('answer', '')}\n\nSource: {note.get('source', 'peer proposal; no admin approval')}\n\nCondition: {note.get('condition', '')}\n")
             for relative, content in (("tasks/active.md", tasks), ("state/current_decisions.md", notes)):
                 path = self.space / relative
-                if path.exists() and not path.read_text().startswith(header):
+                # Rooms created before 0.4.0 carry the Agent Room header; the next projection rewrites it.
+                if path.exists() and not path.read_text().startswith((header, LEGACY_PROJECTION_HEADER)):
                     raise RoomError(f"Projection conflict; preserve and reconcile {path}", "conflict")
                 atomic_write(path, "\n".join(content))
