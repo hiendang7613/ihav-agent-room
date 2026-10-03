@@ -18,6 +18,7 @@ from ihav_agent_room.hooks import handle
 from ihav_agent_room.knowledge import Knowledge
 from ihav_agent_room.native import doctor
 from ihav_agent_room.package_verifier import verify_archive
+from ihav_agent_room.release import activate as activate_release
 from ihav_agent_room.roster import EFFORT_LEVELS, NEW_ROOM_MODE, SELECTABLE_MODES
 from ihav_agent_room.runtime import Supervisor, approval_response, change_mode, request_stop, start_room
 from ihav_agent_room.scaffold import initialize, install_alias
@@ -96,6 +97,9 @@ def parser():
     commands.add_parser("migrate", help="Upgrade a stopped schema-1/2 room, preserving a pre-upgrade SQLite backup")
     stop = commands.add_parser("stop", help="Persist manual stop; wait for owned worker shutdown")
     stop.add_argument("--timeout", type=positive_timeout, default=20)
+    activate = commands.add_parser("activate", help="Show or switch the release every session's next hook and CLI call runs; no restart")
+    activate.add_argument("--root", help="Installed copy under a host plugin cache, for example ~/.claude/plugins/cache/ihav/ihav-agent-room/0.4.5")
+    activate.add_argument("--rollback", action="store_true", help="Switch back to the previously active release")
     commands.add_parser("hook", help=argparse.SUPPRESS)
     commands.add_parser("install-alias", help="Install the bare personal init slash command; never overwrite another skill")
     serve = commands.add_parser("_serve", help=argparse.SUPPRESS)
@@ -261,6 +265,10 @@ def run(args):
         return {"installed": install_alias()}
     if command == "verify-package":
         return verify_archive(args.archive)
+    if command == "activate":
+        if (args.root or args.rollback) and acting_member() != GATEWAY:
+            raise RoomError("Only the main/operator may switch the active release", "authority")
+        return activate_release(args.root, rollback=args.rollback)
     store = Store(args.project)
     if command == "migrate":
         if acting_member() != GATEWAY:

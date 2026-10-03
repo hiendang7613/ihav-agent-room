@@ -1,13 +1,47 @@
 #!/usr/bin/env python3
-"""Plugin-local executable; location is resolved after Claude copies its cache."""
+"""Stable launcher. Each call runs the active release recorded by `ihav-agent-room activate`, else this copy.
 
+Hooks and CLI calls start a new process every time, so an activated release takes effect without restarting the
+session. Keep this file small and stable: an older session keeps calling the launcher of the copy it started with.
+The read rules mirror ihav_agent_room/release.py.
+"""
+
+import json
+import os
 from pathlib import Path
+import re
 import sys
 
 if sys.version_info < (3, 11):
-    raise SystemExit("Agent Room requires Python 3.11 or later; no files changed.")
+    raise SystemExit("ihav-agent-room requires Python 3.11 or later; no files changed.")
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+LAUNCHER_PROTOCOL = 1
+OWN_ROOT = Path(__file__).resolve().parent.parent
+
+
+def active_root():
+    caches = [Path.home() / ".claude" / "plugins" / "cache", Path.home() / ".codex" / "plugins" / "cache"]
+    # A development checkout always runs itself; only installed copies follow the pointer.
+    if os.environ.get("IHAV_AGENT_ROOM_PIN") == "1" or not any(cache.resolve() in OWN_ROOT.parents for cache in caches):
+        return OWN_ROOT
+    try:
+        pointer = Path(os.environ.get("IHAV_HOME") or Path.home() / ".ihav") / "active" / "ihav-agent-room.json"
+        if pointer.is_symlink() or not pointer.is_file():
+            return OWN_ROOT
+        record = json.loads(pointer.read_text(encoding="utf-8"))
+        root = Path(record["root"])
+        package = root / "ihav_agent_room" / "__init__.py"
+        if (record.get("launcher_protocol") != LAUNCHER_PROTOCOL or not root.is_absolute() or root.resolve() != root
+                or not any(cache.resolve() in root.parents for cache in caches)
+                or not (root / "bin" / "ihav-agent-room").is_file() or not package.is_file()
+                or not re.search(rf"^LAUNCHER_PROTOCOL = {LAUNCHER_PROTOCOL}$", package.read_text(encoding="utf-8"), re.M)):
+            return OWN_ROOT
+        return root
+    except (OSError, ValueError, KeyError, TypeError):
+        return OWN_ROOT
+
+
+sys.path.insert(0, str(active_root()))
 
 from ihav_agent_room.cli import main
 

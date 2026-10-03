@@ -11,11 +11,13 @@ import subprocess
 import sys
 import time
 
+from ihav_agent_room import __version__
 from ihav_agent_room.common import (GATEWAY, MEMBERS, MODES, acting_member, PLUGIN_ROOT, RoomError, dumps, file_lock,
                                now, process_alive, process_stamp, uid)
 from ihav_agent_room.native import (CodexClient, claude_agents, codex_usage_snapshot, doctor, exact_claude,
                                owned_descendants, send_claude, start_claude, stop_claude_worker,
                                stop_descendants, wait_for_exit)
+from ihav_agent_room.release import active_release
 from ihav_agent_room.roster import ROSTER_BY_NAME, SELECTABLE_MODES, launch_config
 from ihav_agent_room.store import FYI_CONTEXT_SQL, Store
 
@@ -184,6 +186,7 @@ class Supervisor:
         self.error = None
         self.recovered = False
         self.last_registry_check = 0
+        self.next_release_check = 0
 
     def worker_env(self, name):
         binding = secrets.token_hex(24)
@@ -482,6 +485,27 @@ class Supervisor:
             if waiting and old["status"] != status:
                 self.store.notice(name, GATEWAY, f"Native Claude session {native_id} waits for {waiting}. Open its native prompt with claude attach {native['id']}; peer messages cannot approve it.")
 
+    def request_upgrade(self):
+        """A newly activated release replaces this supervisor and its workers at the next all-idle point.
+
+        It reuses the mode-change drain: no new dispatch, running turns and native prompts finish, then exact-session
+        restart through the stable launcher, which now resolves to the activated release.
+        """
+        if time.monotonic() < self.next_release_check:
+            return
+        self.next_release_check = time.monotonic() + 30
+        target = active_release()
+        if not target or target["version"] == __version__:
+            return
+        with self.store.tx() as db:
+            room = self.store.get_room(db)
+            if room.get("mode_transition") or room["generation"] != self.generation or room["manual_stop"]:
+                return
+            room.update(restart_requested=True, mode_transition={"from": room["mode"], "to": room["mode"], "state": "draining",
+                                                                 "reason": "upgrade", "release": target["version"]})
+            self.store.put_room(db, room)
+            self.store.event(db, "room.upgrade", {"from": __version__, "to": target["version"], "root": target["root"]})
+
     def finish_mode_restart(self):
         """Only observed idle native workers permit cleanup; waiting/failed/unknown is not completion."""
         with self.store.tx() as db:
@@ -550,6 +574,7 @@ class Supervisor:
                 while not self.stopping and self.owner_alive() and self.store.room()["status"] != "stopping":
                     await self.native_events()
                     await self.approvals()
+                    self.request_upgrade()
                     await self.refresh_claude(force=bool(self.store.room().get("mode_transition")))
                     if self.finish_mode_restart():
                         break
