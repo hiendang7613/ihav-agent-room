@@ -18,6 +18,60 @@ class FailedProcess:
         return self.returncode
 
 
+class LaunchedProcess:
+    """A successful `claude --bg` that prints the session ID it backgrounded."""
+    returncode = 0
+
+    def __init__(self, stream, session):
+        stream.write(f"backgrounded · 1a2b3c4d session {session}\n")
+        stream.flush()
+
+    async def wait(self):
+        return 0
+
+
+SESSION = "11111111-2222-3333-4444-555555555555"
+
+
+class SessionDiscoveryTests(unittest.TestCase):
+    """Field reports 2026-10-03 from ihav-competitor-search: --cwd filter and a 4 s liveness budget."""
+
+    def launch(self, project, registry, **env):
+        async def launched(*args, **kwargs):
+            return LaunchedProcess(kwargs["stdout"], SESSION)
+        with patch("ihav_agent_room.native.claude_agents", side_effect=registry), \
+                patch("ihav_agent_room.native.asyncio.create_subprocess_exec", new=launched), \
+                patch("ihav_agent_room.native.process_stamp", return_value="stamp"), \
+                patch.dict("os.environ", env):
+            return asyncio.run(start_claude(project, SESSION, True, {"PATH": "/usr/bin"}, project / "CLAUDE_EXPERT.log",
+                                            member="CLAUDE_EXPERT"))
+
+    def test_a_session_hidden_by_the_cwd_filter_is_found_unscoped_with_its_own_cwd_check(self):
+        with tempfile.TemporaryDirectory(prefix="discovery ") as directory:
+            project = Path(directory)
+            live = {"sessionId": SESSION, "cwd": str(project), "pid": 1, "id": "1a2b3c4d"}
+            elsewhere = dict(live, cwd="/somewhere/else")
+            calls = []
+
+            def registry(_project, _env=None, scoped=True):
+                calls.append(scoped)
+                return [] if scoped else [live]
+            self.assertEqual(self.launch(project, registry)["sessionId"], SESSION)
+            self.assertIn(False, calls)
+
+            def other_project_only(_project, _env=None, scoped=True):
+                return [] if scoped else [elsewhere]
+            with self.assertRaises(RoomError) as caught:
+                self.launch(project, other_project_only, IHAV_AGENT_ROOM_LIVENESS_SECONDS="1")
+            self.assertEqual(caught.exception.code, "identity")  # Another project's session is never adopted.
+
+    def test_liveness_uses_a_wall_clock_budget_and_reports_it(self):
+        with tempfile.TemporaryDirectory(prefix="liveness ") as directory:
+            with self.assertRaises(RoomError) as caught:
+                self.launch(Path(directory), lambda *args, **kwargs: [], IHAV_AGENT_ROOM_LIVENESS_SECONDS="1")
+            self.assertRegex(str(caught.exception), r"did not become live within 1\.\d s")
+
+
 class NativeLaunchTests(unittest.TestCase):
     def test_claude_model_and_effort_are_set_only_on_fresh_worker_launches(self):
         with tempfile.TemporaryDirectory(prefix="native model config ") as directory:

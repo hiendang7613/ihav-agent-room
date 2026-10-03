@@ -10,6 +10,7 @@ import signal
 import socket
 import stat
 import subprocess
+import time
 
 from ihav_agent_room import __version__
 from ihav_agent_room.common import PLUGIN_ROOT, RoomError, atomic_write, dumps, process_alive, process_stamp
@@ -77,17 +78,30 @@ def doctor():
                       "Claude inbox wire format is version-sensitive; native smoke testing is separate."]}
 
 
-def claude_agents(project, env=None):
-    data = json.loads(run_cli(["claude", "agents", "--json", "--all", "--cwd", str(project)], env=env))
+def claude_agents(project, env=None, scoped=True):
+    """Claude's session registry. scoped=False lists every project: the host's --cwd filter can miss a session that
+    was resumed after its project folder was renamed (reported 2026-10-03); callers still match cwd themselves."""
+    args = ["claude", "agents", "--json", "--all", *(["--cwd", str(project)] if scoped else [])]
+    data = json.loads(run_cli(args, env=env))
     if not isinstance(data, list):
         raise RoomError("Unexpected Claude registry shape", "incompatible")
     return data
 
 
+def liveness_seconds():
+    """Wall-clock budget for a launched Claude session to appear in the registry (was a nominal 4 s of sleeps)."""
+    try:
+        return max(1.0, float(os.environ.get("IHAV_AGENT_ROOM_LIVENESS_SECONDS", "30")))
+    except ValueError:
+        return 30.0
+
+
 def exact_claude(project, native_id):
-    matches = [agent for agent in claude_agents(project)
-               if agent.get("sessionId") == native_id and
-               Path(agent.get("cwd", "/nonexistent")).resolve() == Path(project).resolve()]
+    def matching(scoped):
+        return [agent for agent in claude_agents(project, scoped=scoped)
+                if agent.get("sessionId") == native_id and
+                Path(agent.get("cwd", "/nonexistent")).resolve() == Path(project).resolve()]
+    matches = matching(True) or matching(False)
     if len(matches) != 1 or not process_stamp(matches[0].get("pid")):
         raise RoomError("Exact Claude session is not live in this project", "unavailable")
     return matches[0]
@@ -424,20 +438,27 @@ async def start_claude(project, native_id, resume, env, log, member=LAUNCHED_CLA
         reported_ids = set(re.findall(r"\b[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}\b", output))
         # Launch returns before the native process necessarily binds its inbox.
         reported = set()
-        for _ in range(40):
-            agents = await asyncio.to_thread(claude_agents, project)
+        began = time.monotonic()
+        deadline, scoped = began + min(liveness_seconds(), timeout), True  # Never outlast the caller's own timeout.
+        while True:
+            agents = await asyncio.to_thread(claude_agents, project, None, scoped)
             matches = [agent for agent in agents
                        if Path(agent.get("cwd", "/nonexistent")).resolve() == Path(project).resolve()
                        and (agent.get("id") in reported_jobs or agent.get("sessionId") in reported_ids)]
+            if not matches and scoped:
+                scoped = False  # The --cwd filter may hide it; identity and cwd are still matched here.
+                continue
             reported.update(agent["sessionId"] for agent in matches if agent.get("sessionId"))
             if len(matches) == 1 and process_stamp(matches[0].get("pid")):
                 found = matches[0]["sessionId"]
                 if (resume and found == native_id) or (not resume and found not in previous):
                     return matches[0]
                 break
-            await asyncio.sleep(.1)
-        raise RoomError(f"Expected Claude session did not become live; member log: {log_path}; "
-                        "native resume may have created a copy", "identity",
+            if time.monotonic() >= deadline:
+                break
+            await asyncio.sleep(.25)
+        raise RoomError(f"Expected Claude session did not become live within {time.monotonic() - began:.1f} s; "
+                        f"member log: {log_path}; native resume may have created a copy", "identity",
                         log_path=log_path, reported_new_ids=sorted(reported - previous - {native_id}))
 
 
