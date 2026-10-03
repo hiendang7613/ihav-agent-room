@@ -13,6 +13,7 @@ import time
 from ihav_agent_room import __version__
 from ihav_agent_room.common import GATEWAY, MEMBERS, MODES, RoomError, acting_member, canonical_member, dumps, fingerprint, process_alive
 from ihav_agent_room.evidence import matches_terms
+from ihav_agent_room.contracts import TYPES as CONTRACT_TYPES, Contracts
 from ihav_agent_room.globalspace import GlobalSpace
 from ihav_agent_room.guides import GUIDES, read_guide
 from ihav_agent_room.hooks import handle
@@ -119,6 +120,32 @@ def parser():
     space_actions.add_parser("rooms", help="Joined rooms, their policy and last seen release")
     space_actions.add_parser("join", help="Join this room (main only)")
     space_actions.add_parser("leave", help="Stop receiving and sending entries for this room (main only)")
+    contract = commands.add_parser("contract", help="Cross-room contracts through the agents space (data, never admin consent)")
+    contract_actions = contract.add_subparsers(dest="action", required=True)
+    propose = contract_actions.add_parser("propose", help="Ask another joined room for bounded work (main only)")
+    propose.add_argument("--to", required=True, help="Room ID or project folder name of the provider room")
+    propose.add_argument("--type", required=True, choices=sorted(CONTRACT_TYPES))
+    propose.add_argument("--title", required=True)
+    propose.add_argument("--request", required=True)
+    propose.add_argument("--acceptance", required=True, help="How the requester will judge the result")
+    propose.add_argument("--files", nargs="*", default=[], help="Requester-project paths the provider may read")
+    contract_list = contract_actions.add_parser("list")
+    contract_list.add_argument("--waiting", action="store_true", help="Only contracts waiting on this room")
+    contract_list.add_argument("--all", action="store_true", help="Include closed contracts")
+    contract_show = contract_actions.add_parser("show")
+    contract_show.add_argument("id")
+    accept = contract_actions.add_parser("accept", help="Provider accepts (main only)")
+    accept.add_argument("id")
+    accept_basis = accept.add_mutually_exclusive_group(required=True)
+    accept_basis.add_argument("--source", help="This room's admin receipt P-... approving the work")
+    accept_basis.add_argument("--self-accept", nargs="+", metavar="ATTEST",
+                              help="Standing policy: read_named_files_only no_paid_cost one_turn")
+    for name, needs in (("decline", "--reason"), ("reject", "--reason"), ("deliver", "--result")):
+        action = contract_actions.add_parser(name)
+        action.add_argument("id")
+        action.add_argument(needs, required=True, dest="note")
+    for name in ("start", "confirm", "withdraw"):
+        contract_actions.add_parser(name).add_argument("id")
     activate = commands.add_parser("activate", help="Show or switch the release every session's next hook and CLI call runs; no restart")
     activate.add_argument("--root", help="Installed copy under a host plugin cache, for example ~/.claude/plugins/cache/ihav/ihav-agent-room/0.4.5")
     activate.add_argument("--rollback", action="store_true", help="Switch back to the previously active release")
@@ -326,6 +353,8 @@ def run(args):
                              permission_mode=os.environ.get("IHAV_AGENT_ROOM_PERMISSION_MODE", "default")), **mode_info}
     if command == "global":
         return global_command(store, args)
+    if command == "contract":
+        return contract_command(store, args)
     if command == "_autostart":
         return autostart(store, args.session, args.permission_mode)
     if command == "_serve":
@@ -529,6 +558,23 @@ def global_command(store, args):
                           audience=args.to, expires=args.expires)
     return space.post("reply", "Re: " + space.show(args.reply_to)["subject"][:190], args.body, origin=room["id"],
                       member=GATEWAY, reply_to=args.reply_to)
+
+
+def contract_command(store, args):
+    contracts, room = Contracts(), store.room()["id"]
+    if args.action == "list":
+        return contracts.listing(room, waiting=args.waiting, include_closed=args.all)
+    if args.action == "show":
+        return contracts.show(args.id)
+    if acting_member() != GATEWAY:
+        raise RoomError("Only the main/operator acts on contracts for this room", "authority")
+    if args.action == "propose":
+        return contracts.propose(room, contracts.resolve_room(args.to), args.type, args.title, args.request,
+                                 args.acceptance, args.files)
+    if args.action == "accept" and args.source:
+        store.authorize_contract_accept(acting_member(), args.source)
+    return contracts.act(room, args.id, args.action, note=getattr(args, "note", None),
+                         source=getattr(args, "source", None), attest=getattr(args, "self_accept", None))
 
 
 def main(argv=None):

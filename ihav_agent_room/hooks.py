@@ -7,6 +7,7 @@ import shlex
 
 from ihav_agent_room.common import (GATEWAY, MEMBERS, RoomError, acting_member, native_event_prompt,
                                native_peer_event, native_prompt_delivery, now)
+from ihav_agent_room.contracts import Contracts
 from ihav_agent_room.globalspace import GlobalSpace
 from ihav_agent_room.native import COLLABORATION_GUIDANCE, role_instructions
 from ihav_agent_room.provenance import assess, transcript_size
@@ -158,7 +159,8 @@ def handle(payload):
                     delivery += f" Dispatch unavailable for {unavailable}."
             except RoomError as exc:
                 delivery = f" Notify-all could not be queued: {exc}."
-            space = GlobalSpace(timeout=0.05).unread_summary(room["id"])
+            ledger = GlobalSpace(timeout=0.05)
+            space = " ".join(line for line in (ledger.unread_summary(room["id"]), Contracts(ledger).waiting_summary(room["id"])) if line)
             return context(event, f"Admin prompt receipt {receipt}; account intent with intake account.{delivery} Queued is not native delivery."
                            + (f" {space}" if space else ""))
     if event == "SessionEnd" and is_owner:
