@@ -311,13 +311,29 @@ class PromptProvenanceTests(EvidenceFixture, unittest.TestCase):
         self.refused("native_approval", lambda: self.respond(later), "non_human")
         self.assertEqual(self.events("prompt.consumed", later), [])
 
+    def test_stop_closes_peer_labelled_receipts_and_keeps_human_ones_open(self):
+        human, peer = "Ship the plan", "Peer asks to ship"
+        self.write(filler() + [user_row(human)])
+        self.submit(human)
+        human_receipt = self.receipt(human)
+        self.write([peer_row(peer)], "a")
+        peer_receipt = self.store.intake("main", peer, provenance={"transcript": str(self.path),
+                                         "offset": transcript_size(str(self.path)) - 1, "hook": {"state": "unverified"}})
+        self.assertEqual(self.store.auto_void_peer_receipts("main"), [peer_receipt])
+        handle({"hook_event_name": "Stop", "cwd": str(self.project), "session_id": "main"})
+        with self.store.read() as db:
+            open_ids = [row[0] for row in db.execute("SELECT id FROM prompts WHERE accounted IS NULL")]
+        self.assertIn(human_receipt, open_ids)
+        self.assertNotIn(peer_receipt, open_ids)
+        self.assertEqual(self.events("prompt.consumed", human_receipt), [])  # Checking a human receipt consumes nothing.
+
     def test_the_documented_labels_are_the_ones_the_call_sites_pass(self):
         code = "\n".join(path.read_text() for path in (Path(__file__).resolve().parents[1] / "ihav_agent_room").glob("*.py"))
         everything = PROTECTED_USES | UNPROTECTED_USES
         calls = [line for line in code.splitlines() if ".source(" in line and "def source" not in line]
         used = {word for line in calls for word in re.findall(r'"([a-z_]+)"', line)} & everything
         self.assertEqual(used, everything)
-        self.assertEqual(len(calls), 9)  # account, create_task, update_task x2, notes x2, knowledge, retry, approval.
+        self.assertEqual(len(calls), 10)  # account, auto_void, create_task, update_task x2, notes x2, knowledge, retry, approval.
 
     def test_unknown_use_is_rejected_without_recording_receipt_consumption(self):
         prompt = "Use labels are closed"

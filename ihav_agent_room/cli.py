@@ -20,7 +20,7 @@ from ihav_agent_room.native import doctor
 from ihav_agent_room.package_verifier import verify_archive
 from ihav_agent_room.release import activate as activate_release
 from ihav_agent_room.roster import EFFORT_LEVELS, NEW_ROOM_MODE, SELECTABLE_MODES
-from ihav_agent_room.runtime import Supervisor, approval_response, change_mode, request_stop, start_room
+from ihav_agent_room.runtime import Supervisor, approval_response, autostart, change_mode, request_stop, start_room
 from ihav_agent_room.scaffold import initialize, install_alias
 from ihav_agent_room.schema import migrate
 from ihav_agent_room.store import NOTE_STATES, Store
@@ -102,6 +102,9 @@ def parser():
     activate.add_argument("--rollback", action="store_true", help="Switch back to the previously active release")
     commands.add_parser("hook", help=argparse.SUPPRESS)
     commands.add_parser("install-alias", help="Install the bare personal init slash command; never overwrite another skill")
+    auto = commands.add_parser("_autostart", help=argparse.SUPPRESS)
+    auto.add_argument("--session", required=True)
+    auto.add_argument("--permission-mode", default="default")
     serve = commands.add_parser("_serve", help=argparse.SUPPRESS)
     serve.add_argument("--generation", required=True)
     tasks = commands.add_parser("task", help="Assigned work, checkpoints, evidence and writer claims").add_subparsers(dest="action", required=True)
@@ -290,6 +293,8 @@ def run(args):
             return {"initialized": True, "started": False, "room": room, **mode_info}
         return {**start_room(store, os.environ.get("IHAV_AGENT_ROOM_SESSION_ID"),
                              permission_mode=os.environ.get("IHAV_AGENT_ROOM_PERMISSION_MODE", "default")), **mode_info}
+    if command == "_autostart":
+        return autostart(store, args.session, args.permission_mode)
     if command == "_serve":
         asyncio.run(Supervisor(store, args.generation).run())
         room = store.room()

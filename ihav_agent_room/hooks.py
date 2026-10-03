@@ -9,7 +9,7 @@ from ihav_agent_room.common import (GATEWAY, MEMBERS, RoomError, acting_member, 
                                native_peer_event, native_prompt_delivery, now)
 from ihav_agent_room.native import COLLABORATION_GUIDANCE, role_instructions
 from ihav_agent_room.provenance import assess, transcript_size
-from ihav_agent_room.runtime import bind_main, request_stop, start_room
+from ihav_agent_room.runtime import bind_main, needs_autostart, request_stop, spawn_autostart, start_room
 from ihav_agent_room.scaffold import install_alias
 from ihav_agent_room.store import Store
 
@@ -60,9 +60,16 @@ def handle(payload):
                         raise RoomError("Native identity mismatch; do not perform tasks", "identity")
                     store.member(member, {"permission_mode": payload.get("permission_mode", "default")})
                 else:
-                    bind_main(store, session, payload.get("permission_mode", "default"))
-                    result = start_room(store, session, permission_mode=payload.get("permission_mode", "default"), automatic=True)
-                    warnings.append(result.get("reason", "Room resume requested; verify status."))
+                    try:
+                        bind_main(store, session, payload.get("permission_mode", "default"))
+                        result = start_room(store, session, permission_mode=payload.get("permission_mode", "default"), automatic=True)
+                        warnings.append(result.get("reason", "Room resume requested; verify status."))
+                    except RoomError as exc:
+                        if exc.code != "unavailable":
+                            raise
+                        # This session is not in the host registry yet; keep trying in the background.
+                        spawn_autostart(store, session, payload.get("permission_mode", "default"))
+                        warnings.append("Room resume continues in the background; verify status.")
                 model = payload.get("model")
                 observed = model.strip() if isinstance(model, str) and model.strip() else None
                 settings = {
@@ -109,6 +116,8 @@ def handle(payload):
             detail += ("Bound hook match records delivery, not reading, processing or consent."
                        if observed else "No bound delivery observation; no permission or consent.")
             return context(event, detail)
+        if not worker and not is_owner and needs_autostart(store, session):
+            spawn_autostart(store, session, payload.get("permission_mode", "default"))  # Self-heal after a new main session.
         if not worker and is_owner:
             level = session_effort(payload)
             if level:
@@ -155,6 +164,7 @@ def handle(payload):
         request_stop(store, manual=False, session=session)
         return {}
     if event == "Stop" and is_owner and not payload.get("stop_hook_active"):
+        store.auto_void_peer_receipts(session)
         with store.read() as db:
             rows = [row for row in db.execute("SELECT id,body FROM prompts WHERE session=? AND accounted IS NULL", (session,))
                     if not native_event_prompt(row["body"])]

@@ -42,6 +42,53 @@ def bind_main(store, session, permission_mode="default"):
     return owner
 
 
+def autostart(store, session, permission_mode="default", budget=60, pause=3):
+    """Bind this main session and resume the room in the background.
+
+    The host may list a new session in its registry only after SessionStart returns, so binding retries while the
+    session is not yet live. Another live owner, a manual stop or any other refusal ends the attempt; the outcome is
+    recorded as a room event instead of being guessed.
+    """
+    deadline = time.monotonic() + budget
+    try:
+        with file_lock(store.runtime / "autostart.lock", blocking=False):
+            while True:
+                try:
+                    result = start_room(store, session, permission_mode=permission_mode, automatic=True)
+                    outcome = {"session": session, "result": "started" if result.get("started") else "not_started",
+                               "reason": result.get("reason")}
+                    break
+                except RoomError as exc:
+                    if exc.code != "unavailable" or time.monotonic() >= deadline:
+                        outcome = {"session": session, "result": "failed", "code": exc.code, "reason": str(exc)}
+                        break
+                    time.sleep(pause)
+    except RoomError as exc:  # Another autostart already runs for this room.
+        return {"session": session, "result": "skipped", "reason": str(exc)}
+    with store.tx() as db:
+        store.event(db, "room.autostart", outcome)
+    return outcome
+
+
+def spawn_autostart(store, session, permission_mode="default"):
+    """Run autostart detached, so a hook returns at once."""
+    store.runtime.mkdir(parents=True, exist_ok=True)
+    with open(store.runtime / "autostart.log", "a", encoding="utf-8") as log:
+        subprocess.Popen([sys.executable, str(PLUGIN_ROOT / "bin" / "ihav-agent-room"), "--project", str(store.project),
+                          "_autostart", "--session", session, "--permission-mode", permission_mode],
+                         cwd=store.project, env=dict(os.environ, IHAV_AGENT_ROOM_MEMBER=GATEWAY),
+                         stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
+
+
+def needs_autostart(store, session):
+    """A previously bound room lost its owner process and was not stopped by hand: this main session may resume it."""
+    room = store.room()
+    owner, supervisor = room.get("owner") or {}, room.get("supervisor") or {}
+    return bool(owner) and owner.get("session") != session and not room["manual_stop"] \
+        and not process_alive(owner.get("pid"), owner.get("stamp")) \
+        and not process_alive(supervisor.get("pid"), supervisor.get("stamp"))
+
+
 def start_room(store, session, mode=None, permission_mode="default", automatic=False):
     if acting_member() != GATEWAY:
         raise RoomError("A worker cannot become the room's admin session", "authority")

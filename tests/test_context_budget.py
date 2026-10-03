@@ -20,8 +20,9 @@ os.environ.pop("CLAUDE_EFFORT", None)  # Hermetic: the host session effort must 
 
 BUDGETS = {
     # 2026-10-03: +70 bytes buy the admin's three reply zones in the guidance line (also in worker instructions).
-    "guidance": 1170,
-    "worker_role_instructions": 1210,
+    # 2026-10-03: +70 bytes buy the admin's automation rule (routine room steps without asking; only decisions go up).
+    "guidance": 1240,
+    "worker_role_instructions": 1280,  # 2026-10-03: the same +70-byte automation rule (shared guidance).
     "delivery_taskless_overhead": 450,
     "delivery_taskless_recovery_overhead": 650,
     "delivery_task_overhead_excluding_pack": 550,
@@ -35,7 +36,8 @@ BUDGETS = {
     "status_compact_one_task": 2740,
     # 2026-10-02: +20 bytes buy the admin's eight-section reply shape (6. Risks, 7. AIIdeas) in the guidance line.
     # 2026-10-03: +90 bytes buy the admin's three reply zones (Agents-Zone, Result-Zone, Admin-Zone).
-    "main_sessionstart_context": 1210,
+    # 2026-10-03: +70 bytes buy the admin's automation rule in the shared guidance.
+    "main_sessionstart_context": 1280,
     "admin_prompt_context": 300,
     # DEC-020 (2026-10-01): cap wrapper bytes using the longest generated notice ID and max receipt ID.
     "admin_notice_delivery_overhead": 550,

@@ -37,7 +37,7 @@ CREATE TABLE events (seq INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL,
 # in prompt.consumed with their provenance but never refused; a host label that marks the prompt non-human refuses every use.
 PROTECTED_USES = frozenset({"native_approval", "task_create_implementation", "task_assign", "task_contract",
                             "task_cancel_or_reopen", "note_admin", "knowledge_admin", "message_retry"})
-UNPROTECTED_USES = frozenset({"account", "task_create_analysis"})
+UNPROTECTED_USES = frozenset({"account", "auto_void", "task_create_analysis"})
 MAX_MESSAGE_ID_BYTES = 64
 MAX_MESSAGE_CHARS = 16000
 ADMIN_NOTICE_PROVENANCE = frozenset({"human", "non_human", "unverified", "manual_recovery"})
@@ -328,7 +328,9 @@ class Store:
             provenance = assess_chain(mine[1].get("transcript"), offsets + [mine[1].get("offset")], row["body"])
         else:
             provenance = {"state": "absent", "reason": "no provenance record: receipt predates provenance records or was recovered manually"}
-        if provenance["state"] == "non_human" and use == "account":
+        if use == "auto_void" and provenance["state"] != "non_human":
+            raise RoomError("Only a receipt the host labels non-human closes automatically", "skip")  # Nothing recorded.
+        if provenance["state"] == "non_human" and use in {"account", "auto_void"}:
             # The hook could not see the label yet; closing the receipt as void keeps the Stop reminder finite.
             Store.event(db, "prompt.voided", {"receipt": prompt_id, "use": use} | provenance)
             return provenance | {"void": True}
@@ -423,6 +425,26 @@ class Store:
             db.execute("UPDATE prompts SET accounted=? WHERE id=?",
                        (dumps({"disposition": disposition, "refs": refs}), prompt_id))
         return {}
+
+    def auto_void_peer_receipts(self, session):
+        """Close, as void, this session's open receipts that the host transcript now labels non-human.
+
+        Older hooks made them before the transcript row existed; closing them needs no admin answer and grants nothing.
+        """
+        with self.read() as db:
+            ids = [row[0] for row in db.execute("SELECT id FROM prompts WHERE session=? AND accounted IS NULL", (session,))]
+        closed = []
+        for prompt_id in ids:
+            try:
+                with self.tx() as db:
+                    provenance = self.source(db, prompt_id, "auto_void")
+                    db.execute("UPDATE prompts SET accounted=? WHERE id=?", (dumps(
+                        {"disposition": f"void: host labels this prompt {provenance['kind']}, not admin (automatic)", "refs": []}),
+                        prompt_id))
+                closed.append(prompt_id)
+            except RoomError:
+                continue
+        return closed
 
     def create_task(self, actor, data, *, claim=False):
         self.main_only(actor)
