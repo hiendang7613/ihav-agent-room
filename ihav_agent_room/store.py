@@ -325,6 +325,10 @@ class Store:
             provenance = assess_chain(mine[1].get("transcript"), offsets + [mine[1].get("offset")], row["body"])
         else:
             provenance = {"state": "absent", "reason": "no provenance record: receipt predates provenance records or was recovered manually"}
+        if provenance["state"] == "non_human" and use == "account":
+            # The hook could not see the label yet; closing the receipt as void keeps the Stop reminder finite.
+            Store.event(db, "prompt.voided", {"receipt": prompt_id, "use": use} | provenance)
+            return provenance | {"void": True}
         if provenance["state"] == "non_human":
             message = f"The host transcript labels this prompt {provenance['kind']}, not admin; it cannot be a receipt"
         elif use in PROTECTED_USES and provenance["state"] != "human":
@@ -401,13 +405,21 @@ class Store:
         if not disposition.strip():
             raise RoomError("Record how each intent was handled; a status question need not create a task")
         with self.tx() as db:
-            self.source(db, prompt_id, "account")
+            provenance = self.source(db, prompt_id, "account")
+            if provenance.get("void"):
+                if refs:
+                    raise RoomError("A prompt the host labels non-admin takes no task or note references", "authority")
+                db.execute("UPDATE prompts SET accounted=? WHERE id=?", (dumps(
+                    {"disposition": f"void: host labels this prompt {provenance['kind']}, not admin", "requested": disposition, "refs": []}),
+                    prompt_id))
+                return {"voided": provenance["kind"]}
             for ref in refs:
                 if not any(db.execute(f"SELECT 1 FROM {table} WHERE id=?", (ref,)).fetchone()
                            for table in ("tasks", "notes", "knowledge")):
                     raise RoomError(f"Unknown disposition reference: {ref}")
             db.execute("UPDATE prompts SET accounted=? WHERE id=?",
                        (dumps({"disposition": disposition, "refs": refs}), prompt_id))
+        return {}
 
     def create_task(self, actor, data, *, claim=False):
         self.main_only(actor)

@@ -454,8 +454,7 @@ def run(args):
                                                           receipt_id=receipt, provenance_state="manual_recovery")
             return {"receipt": receipt, "origin": "manual_recovery", "native_permission_approval_eligible": False,
                     "notify_all_queued": notification["members"], "room_status": notification["room_status"]}
-        store.account(actor, args.id, args.disposition, args.refs)
-        return {"accounted": args.id}
+        return {"accounted": args.id} | store.account(actor, args.id, args.disposition, args.refs)
     if command == "approval":
         return approval_response(store, actor, args.id, args.source, args.decision)
     raise RoomError("Unsupported command")

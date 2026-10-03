@@ -287,10 +287,19 @@ class PromptProvenanceTests(EvidenceFixture, unittest.TestCase):
         self.write([peer_row("Go ahead again")], "a")
         later = self.store.intake("main", "Go ahead again", provenance={"transcript": str(self.path), "offset": transcript_size(str(self.path)) - 1,
                                                                         "hook": {"state": "unverified"}})
-        for use, action in (("account", lambda: self.store.account("CLAUDE_01", later, "handled", [])),
-                            ("task_create_analysis", lambda: self.task(source=later, authority="analysis", scope=[])),
+        for use, action in (("task_create_analysis", lambda: self.task(source=later, authority="analysis", scope=[])),
                             ("native_approval", lambda: self.respond(later))):
             self.refused(use, action, "non_human")
+        self.assertEqual(self.events("prompt.consumed", later), [])
+        # Bookkeeping closes it as void instead, so the Stop reminder ends; it still grants nothing.
+        with self.assertRaises(RoomError):
+            self.store.account("CLAUDE_01", later, "handled", ["T-unknown"])
+        self.assertEqual(self.store.account("CLAUDE_01", later, "handled", []), {"voided": "peer"})
+        self.assertEqual([e["state"] for e in self.events("prompt.voided", later)], ["non_human"])
+        with self.store.read() as db:
+            accounted = json.loads(db.execute("SELECT accounted FROM prompts WHERE id=?", (later,)).fetchone()[0])
+        self.assertTrue(accounted["disposition"].startswith("void: host labels this prompt peer"))
+        self.refused("native_approval", lambda: self.respond(later), "non_human")
         self.assertEqual(self.events("prompt.consumed", later), [])
 
     def test_the_documented_labels_are_the_ones_the_call_sites_pass(self):
