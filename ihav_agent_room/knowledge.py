@@ -2,8 +2,8 @@
 
 import json
 
-from agent_room.common import MEMBERS, RoomError, dumps, now, uid
-from agent_room.evidence import bounded, matches_terms
+from ihav_agent_room.common import MEMBERS, RoomError, dumps, now, uid
+from ihav_agent_room.evidence import bounded, matches_terms
 
 
 FIELDS = {"title", "body", "basis", "evidence", "tags", "applies_when", "limits", "source", "state"}
@@ -80,7 +80,7 @@ class Knowledge:
                                   title=bounded(record["title"], 160, terms=terms), tags=bounded(record["tags"], 64, terms=terms),
                                   preview=bounded(record["body"], 280, terms=terms), applies_when=bounded(record["applies_when"], 160, terms=terms),
                                   limits=bounded(record["limits"], 160, terms=terms), cursor=row["cursor"],
-                                  read_command=f"agent-room knowledge show {record['id']}"))
+                                  read_command=f"ihav-agent-room knowledge show {record['id']}"))
                 if len(items) > limit:
                     break
         return {"items": items[:limit], "next_after": items[limit - 1]["cursor"] if len(items) > limit else None,

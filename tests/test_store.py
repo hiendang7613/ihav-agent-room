@@ -6,9 +6,9 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from agent_room.common import RoomError, fingerprint
-from agent_room.scaffold import initialize, install_alias
-from agent_room.store import Store
+from ihav_agent_room.common import RoomError, fingerprint
+from ihav_agent_room.scaffold import initialize, install_alias
+from ihav_agent_room.store import Store
 from receipts import human_receipt
 
 
@@ -74,7 +74,7 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(readme.read_bytes(), original_readme)
         self.assertTrue(guide.is_file())
         self.assertIn("conventions/collaboration.md", agents.read_text())
-        self.assertIn("agent-room guide", agents.read_text())
+        self.assertIn("ihav-agent-room guide", agents.read_text())
         self.assertIn("pending_inboxes.by_member", agents.read_text())
         self.assertIn("read_command", agents.read_text())
         self.assertIn("follow next_after until null", agents.read_text())

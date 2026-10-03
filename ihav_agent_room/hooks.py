@@ -5,13 +5,13 @@ import os
 from pathlib import Path
 import shlex
 
-from agent_room.common import (GATEWAY, MEMBERS, RoomError, acting_member, native_event_prompt,
+from ihav_agent_room.common import (GATEWAY, MEMBERS, RoomError, acting_member, native_event_prompt,
                                native_peer_event, native_prompt_delivery, now)
-from agent_room.native import COLLABORATION_GUIDANCE, role_instructions
-from agent_room.provenance import assess, transcript_size
-from agent_room.runtime import bind_main, request_stop, start_room
-from agent_room.scaffold import install_alias
-from agent_room.store import Store
+from ihav_agent_room.native import COLLABORATION_GUIDANCE, role_instructions
+from ihav_agent_room.provenance import assess, transcript_size
+from ihav_agent_room.runtime import bind_main, request_stop, start_room
+from ihav_agent_room.scaffold import install_alias
+from ihav_agent_room.store import Store
 
 
 def session_effort(payload):
@@ -36,7 +36,7 @@ def handle(payload):
     if event == "SessionStart":
         installed = False
         warnings = []
-        if not worker and os.environ.get("AGENT_ROOM_SKIP_ALIAS") != "1":
+        if not worker and os.environ.get("IHAV_AGENT_ROOM_SKIP_ALIAS") != "1":
             try:
                 installed = install_alias()
             except RoomError as exc:
@@ -44,8 +44,8 @@ def handle(payload):
         env_file = os.environ.get("CLAUDE_ENV_FILE")
         if env_file:
             with open(env_file, "a", encoding="utf-8") as output:
-                for key, value in {"AGENT_ROOM_MEMBER": member, "AGENT_ROOM_SESSION_ID": session,
-                                   "AGENT_ROOM_PERMISSION_MODE": payload.get("permission_mode", "default")}.items():
+                for key, value in {"IHAV_AGENT_ROOM_MEMBER": member, "IHAV_AGENT_ROOM_SESSION_ID": session,
+                                   "IHAV_AGENT_ROOM_PERMISSION_MODE": payload.get("permission_mode", "default")}.items():
                     output.write(f"export {key}={shlex.quote(value)}\n")
         if store.exists():
             try:
@@ -86,7 +86,7 @@ def handle(payload):
             else:
                 instructions = "Preserve unfinished tasks. " + COLLABORATION_GUIDANCE
         else:
-            instructions = "Agent Room is available. Only initialize this project when the admin invokes /agent-room:init. No room has been created."
+            instructions = "Agent Room is available. Only initialize this project when the admin invokes /ihav-agent-room:init. No room has been created."
         additional_context = instructions + ("\n" + "\n".join(warnings) if warnings else "")
         return context(event, additional_context, reloadSkills=installed) if additional_context else {}
     if not store.exists():

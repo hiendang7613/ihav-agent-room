@@ -16,12 +16,12 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from agent_room.common import RoomError, dumps
-from agent_room.hooks import handle
-from agent_room.knowledge import Knowledge
-from agent_room.provenance import WINDOW_MARGIN, assess, transcript_size
-from agent_room.runtime import approval_response
-from agent_room.store import PROTECTED_USES, UNPROTECTED_USES
+from ihav_agent_room.common import RoomError, dumps
+from ihav_agent_room.hooks import handle
+from ihav_agent_room.knowledge import Knowledge
+from ihav_agent_room.provenance import WINDOW_MARGIN, assess, transcript_size
+from ihav_agent_room.runtime import approval_response
+from ihav_agent_room.store import PROTECTED_USES, UNPROTECTED_USES
 from test_evidence import EvidenceFixture
 
 os.environ.pop("CLAUDE_EFFORT", None)  # Hermetic: the host session effort must not leak into room state.
@@ -55,7 +55,7 @@ class PromptProvenanceTests(EvidenceFixture, unittest.TestCase):
             room = self.store.get_room(db)
             room["owner"] = {"session": "main"}
             self.store.put_room(db, room)
-        env = patch.dict(os.environ, AGENT_ROOM_MEMBER="CLAUDE_01")
+        env = patch.dict(os.environ, IHAV_AGENT_ROOM_MEMBER="CLAUDE_01")
         env.start()
         self.addCleanup(env.stop)
         self.scratch = tempfile.TemporaryDirectory(prefix="transcript ")
@@ -294,7 +294,7 @@ class PromptProvenanceTests(EvidenceFixture, unittest.TestCase):
         self.assertEqual(self.events("prompt.consumed", later), [])
 
     def test_the_documented_labels_are_the_ones_the_call_sites_pass(self):
-        code = "\n".join(path.read_text() for path in (Path(__file__).resolve().parents[1] / "agent_room").glob("*.py"))
+        code = "\n".join(path.read_text() for path in (Path(__file__).resolve().parents[1] / "ihav_agent_room").glob("*.py"))
         everything = PROTECTED_USES | UNPROTECTED_USES
         calls = [line for line in code.splitlines() if ".source(" in line and "def source" not in line]
         used = {word for line in calls for word in re.findall(r'"([a-z_]+)"', line)} & everything

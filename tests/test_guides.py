@@ -15,11 +15,11 @@ import zipfile
 from contextlib import redirect_stderr, redirect_stdout
 from unittest.mock import patch
 
-from agent_room import __version__
-from agent_room.cli import main, parser, run
-from agent_room.common import PLUGIN_ROOT, RoomError
-from agent_room.package import build
-from agent_room.scaffold import initialize
+from ihav_agent_room import __version__
+from ihav_agent_room.cli import main, parser, run
+from ihav_agent_room.common import PLUGIN_ROOT, RoomError
+from ihav_agent_room.package import build
+from ihav_agent_room.scaffold import initialize
 
 
 class GuideTests(unittest.TestCase):
@@ -31,14 +31,14 @@ class GuideTests(unittest.TestCase):
         self.project.mkdir()
 
     def call(self, *args):
-        return subprocess.run([sys.executable, str(PLUGIN_ROOT / "bin/agent-room"),
+        return subprocess.run([sys.executable, str(PLUGIN_ROOT / "bin/ihav-agent-room"),
                                "--project", str(self.project), "--json", "guide", *args],
-                              cwd=self.root, env=dict(os.environ, PATH="", AGENT_ROOM_MEMBER="unbound"),
+                              cwd=self.root, env=dict(os.environ, PATH="", IHAV_AGENT_ROOM_MEMBER="unbound"),
                               capture_output=True, text=True, timeout=5)
 
     def test_catalog_needs_no_project_or_resource_read_and_contains_only_pointers(self):
-        with patch("agent_room.guides.PLUGIN_ROOT", self.root / "missing-plugin"), \
-                patch("agent_room.cli.Store", side_effect=AssertionError("Guide opened a room")):
+        with patch("ihav_agent_room.guides.PLUGIN_ROOT", self.root / "missing-plugin"), \
+                patch("ihav_agent_room.cli.Store", side_effect=AssertionError("Guide opened a room")):
             result = run(parser().parse_args(["--project", str(self.root / "missing-project"), "guide"]))
         self.assertEqual(result["plugin_version"], __version__)
         self.assertEqual({item["topic"] for item in result["topics"]},
@@ -47,15 +47,15 @@ class GuideTests(unittest.TestCase):
         self.assertLess(len(json.dumps(result)), 1000)
         self.assertFalse((self.root / "missing-project").exists())
         for item in result["topics"]:
-            self.assertEqual(item["read_command"], "agent-room guide " + item["topic"])
+            self.assertEqual(item["read_command"], "ihav-agent-room guide " + item["topic"])
 
     def test_selected_topic_reads_exact_utf8_bytes_without_requiring_other_guides(self):
         shipped = self.root / "payload/templates/conventions/learning.md"
         shipped.parent.mkdir(parents=True)
         content = "# Học cùng nhau\r\nGiữ điều kiện và phản chứng.\r\n".encode("utf-8")
         shipped.write_bytes(content)
-        with patch("agent_room.guides.PLUGIN_ROOT", self.root / "payload"), \
-                patch("agent_room.cli.Store", side_effect=AssertionError("Guide opened a room")):
+        with patch("ihav_agent_room.guides.PLUGIN_ROOT", self.root / "payload"), \
+                patch("ihav_agent_room.cli.Store", side_effect=AssertionError("Guide opened a room")):
             result = run(parser().parse_args(["guide", "learning"]))
         self.assertEqual(result["content"], content.decode("utf-8"))
         self.assertEqual(result["sha256"], hashlib.sha256(content).hexdigest())
@@ -85,7 +85,7 @@ class GuideTests(unittest.TestCase):
         result = self.call("collaboration")
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         data = json.loads(result.stdout)["data"]
-        self.assertIn("agent-room note search", data["content"])
+        self.assertIn("ihav-agent-room note search", data["content"])
         self.assertNotIn("Our custom discussion rule", data["content"])
         self.assertIn("does not replace project-specific instructions", data["rule"])
         self.assertEqual({p.relative_to(self.project): p.read_bytes() for p in self.project.rglob("*") if p.is_file()}, before)
@@ -107,7 +107,7 @@ class GuideTests(unittest.TestCase):
         for content in (None, b"\xff"):
             if content is not None:
                 shipped.write_bytes(content)
-            with patch("agent_room.guides.PLUGIN_ROOT", self.root / "payload"), redirect_stdout(io.StringIO()) as output:
+            with patch("ihav_agent_room.guides.PLUGIN_ROOT", self.root / "payload"), redirect_stdout(io.StringIO()) as output:
                 code = main(["--project", str(self.project), "--json", "guide", "learning"])
             self.assertEqual(code, 1)
             result = json.loads(output.getvalue())
@@ -121,7 +121,7 @@ class GuideTests(unittest.TestCase):
         build(archive)
         with zipfile.ZipFile(archive) as package:
             package.extractall(self.root / "package")
-        copied = self.root / "package/agent-room"
+        copied = self.root / "package/ihav-agent-room"
         (copied / "templates/conventions/evidence.md").unlink()
         target = self.root / "incomplete.zip"
         with self.assertRaises(RoomError) as caught:
@@ -136,7 +136,7 @@ class GuideTests(unittest.TestCase):
         checked, rejected = 0, []
         for path in files:
             for number, line in enumerate(path.read_text().splitlines(), 1):
-                match = re.match(r"^\s{0,8}(agent-room\s+.+)$", line)
+                match = re.match(r"^\s{0,8}(ihav-agent-room\s+.+)$", line)
                 if not match:
                     continue
                 command = re.sub(r"--expected-version N\b", "--expected-version 1", match.group(1).split("#")[0].rstrip())

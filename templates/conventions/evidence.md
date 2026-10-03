@@ -1,6 +1,6 @@
 # Source-bound review and recovery — schema 2
 
-Use `agent-room task context T-ID` before resuming or acting on a late message.
+Use `ihav-agent-room task context T-ID` before resuming or acting on a late message.
 Read every full-record pointer when the context is truncated. Reconcile changed owner,
 decision, source, native session/generation and unknown effects before repeating actions.
 Native history stays native; this pack supplies current project obligations.
@@ -15,8 +15,8 @@ It grants no new implementation/provider/commit authority to either participant.
 Finish scoped work and checks, then:
 
 ```text
-agent-room task submit T-ID --expected-version N --input submission.json
-agent-room task submit T-ID --expected-version N --ack M-ID --input submission.json
+ihav-agent-room task submit T-ID --expected-version N --input submission.json
+ihav-agent-room task submit T-ID --expected-version N --ack M-ID --input submission.json
 ```
 
 `submission.json`: `{"paths":["src/file.py","reviews/checks.md"],"summary":"What changed","evidence":["Exact check and result"]}`.
@@ -39,8 +39,8 @@ Only the assigned reviewer records a receipt. The reviewer is not the task owner
 checkpoint the task. Record:
 
 ```text
-agent-room review record S-ID --input review.json
-agent-room review record S-ID --ack M-ID --input review.json
+ihav-agent-room review record S-ID --input review.json
+ihav-agent-room review record S-ID --ack M-ID --input review.json
 ```
 
 `review.json`: `source_digest` (exact submitted digest), `verdict` (`approve`, `changes_requested`,
@@ -60,10 +60,10 @@ dependencies/decisions/evidence still satisfy the task. A reviewer receipt canno
 ## Checkpoint and inspect execution
 
 ```text
-agent-room task checkpoint T-ID --expected-version N --input checkpoint.json
-agent-room checkpoint show C-ID
-agent-room attempt list --task T-ID --after 0 --limit 50
-agent-room attempt show E-ID
+ihav-agent-room task checkpoint T-ID --expected-version N --input checkpoint.json
+ihav-agent-room checkpoint show C-ID
+ihav-agent-room attempt list --task T-ID --after 0 --limit 50
+ihav-agent-room attempt show E-ID
 ```
 
 Checkpoint input: `summary`, `last_safe_action`, `next`, `paths` (individual files) and

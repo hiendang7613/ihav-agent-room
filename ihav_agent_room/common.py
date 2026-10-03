@@ -12,7 +12,7 @@ import subprocess
 import tempfile
 import uuid
 
-from agent_room.roster import GATEWAY, MEMBERS as ROSTER_MEMBERS, MODE_MEMBERS, canonical_member
+from ihav_agent_room.roster import GATEWAY, MEMBERS as ROSTER_MEMBERS, MODE_MEMBERS, canonical_member
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
@@ -21,8 +21,8 @@ MEMBERS = ROSTER_MEMBERS
 
 
 def acting_member(default=GATEWAY):
-    """The member this process acts as: AGENT_ROOM_MEMBER (an id or an alias), else `default`."""
-    return canonical_member(os.environ.get("AGENT_ROOM_MEMBER", default))
+    """The member this process acts as: IHAV_AGENT_ROOM_MEMBER (an id or an alias), else `default`."""
+    return canonical_member(os.environ.get("IHAV_AGENT_ROOM_MEMBER", default))
 
 
 class RoomError(Exception):

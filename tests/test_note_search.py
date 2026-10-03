@@ -9,9 +9,9 @@ import unittest
 from contextlib import redirect_stdout
 from unittest.mock import patch
 
-from agent_room.cli import main, parser, run
-from agent_room.common import PLUGIN_ROOT, RoomError, dumps
-from agent_room.store import Store
+from ihav_agent_room.cli import main, parser, run
+from ihav_agent_room.common import PLUGIN_ROOT, RoomError, dumps
+from ihav_agent_room.store import Store
 from test_evidence import EvidenceFixture
 
 
@@ -92,7 +92,7 @@ class NoteSearchTests(EvidenceFixture, unittest.TestCase):
         item = self.search("rare-tail counterexample")["items"][0]
         self.assertLess(len(dumps(item)), 1000)
         self.assertEqual(item["author"], "CODEX_EXPERT")
-        self.assertEqual(item["read_command"], f"agent-room note show {question['id']}")
+        self.assertEqual(item["read_command"], f"ihav-agent-room note show {question['id']}")
         self.assertIn("truncated", item["body_preview"])
         full = run(parser().parse_args(["--project", str(self.project), *item["read_command"].split()[1:]]))
         self.assertTrue(full["body"].endswith("rare-tail"))
@@ -140,16 +140,16 @@ class NoteSearchTests(EvidenceFixture, unittest.TestCase):
         self.store.project_views()
         before = {str(p): p.read_bytes() for p in self.project.rglob("*") if p.is_file()}
         args = ["--project", str(self.project), "--json", "note", "search", "resume", "--author", "CODEX_EXPERT"]
-        with patch.dict(os.environ, {"AGENT_ROOM_MEMBER": "", "AGENT_ROOM_BINDING": ""}), \
+        with patch.dict(os.environ, {"IHAV_AGENT_ROOM_MEMBER": "", "IHAV_AGENT_ROOM_BINDING": ""}), \
                 patch.object(Store, "actor", side_effect=AssertionError("Read requested a member binding")), \
                 patch.object(Store, "status", side_effect=AssertionError("Read rebuilt room status")), \
                 patch.object(Store, "project_views", side_effect=AssertionError("Read changed projections")), \
-                patch("agent_room.cli.start_room", side_effect=AssertionError("Read started native work")), \
+                patch("ihav_agent_room.cli.start_room", side_effect=AssertionError("Read started native work")), \
                 redirect_stdout(io.StringIO()) as output:
             self.assertEqual(main(args), 0)
         self.assertEqual(json.loads(output.getvalue())["data"]["items"][0]["id"], question["id"])
-        command = [sys.executable, str(PLUGIN_ROOT / "bin/agent-room"), *args]
-        env = dict(os.environ, PATH="", AGENT_ROOM_MEMBER="", AGENT_ROOM_BINDING="")
+        command = [sys.executable, str(PLUGIN_ROOT / "bin/ihav-agent-room"), *args]
+        env = dict(os.environ, PATH="", IHAV_AGENT_ROOM_MEMBER="", IHAV_AGENT_ROOM_BINDING="")
         result = subprocess.run(command, env=env, text=True, capture_output=True, timeout=5)
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         self.assertEqual(len(result.stdout.splitlines()), 1)
@@ -168,7 +168,7 @@ class NoteSearchTests(EvidenceFixture, unittest.TestCase):
         before_attention = self.store.task_context(task["id"])["attention"]
         self.note(kind="proposal", body="Try another idea later", tasks=[task["id"]])
         pack = self.store.task_context(task["id"])
-        self.assertIn(f"agent-room note search --task {task['id']}", pack["full_record_commands"])
+        self.assertIn(f"ihav-agent-room note search --task {task['id']}", pack["full_record_commands"])
         self.assertEqual(pack["attention"], before_attention)
         self.assertEqual(self.current(task), before_task)
         self.assertEqual(pack["review"]["state"], "approved")

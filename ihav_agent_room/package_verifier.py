@@ -14,11 +14,13 @@ import stat
 import zipfile
 import zlib
 
-from agent_room.common import RoomError
+from ihav_agent_room.common import RoomError
 
-ROOT = "agent-room/"
-MANIFEST_NAME = ROOT + "PACKAGE-MANIFEST.json"
-MANIFEST_KEY = MANIFEST_NAME[len(ROOT):]
+ROOT = "ihav-agent-room/"
+# Releases up to 0.3.25 shipped as Agent Room; their archives keep the old root.
+LEGACY_ROOT = "agent-room/"
+MANIFEST_KEY = "PACKAGE-MANIFEST.json"
+MANIFEST_NAME = ROOT + MANIFEST_KEY
 MANIFEST_FIELDS = {"version", "files_sha256"}
 MAX_ENTRIES = 256
 MAX_ENTRY_SIZE = 16 * 1024 * 1024
@@ -65,6 +67,8 @@ def _verify(archive):
     entries = archive.infolist()
     _check_bounds(entries)
 
+    root = LEGACY_ROOT if entries and entries[0].orig_filename.startswith(LEGACY_ROOT) else ROOT
+    manifest_name = root + MANIFEST_KEY
     manifest_entry = None
     payload = {}
     seen = set()
@@ -73,16 +77,16 @@ def _verify(archive):
         if name in seen:
             raise VerificationError(f"duplicate ZIP entry: {name!r}")
         seen.add(name)
-        if not name.startswith(ROOT):
-            raise VerificationError(f"entry outside {ROOT!r}: {name!r}")
+        if not name.startswith(root):
+            raise VerificationError(f"entry outside {root!r}: {name!r}")
         _check_path(name, "entry")
         _check_regular_file(entry)
-        if name == MANIFEST_NAME:
+        if name == manifest_name:
             manifest_entry = entry
         else:
-            payload[name[len(ROOT):]] = entry
+            payload[name[len(root):]] = entry
     if manifest_entry is None:
-        raise VerificationError(f"missing {MANIFEST_NAME}")
+        raise VerificationError(f"missing {manifest_name}")
 
     version, expected = _read_manifest(archive, manifest_entry)
     missing = sorted(expected.keys() - payload.keys())

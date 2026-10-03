@@ -18,17 +18,17 @@ import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from agent_room.common import PLUGIN_ROOT, RoomError, atomic_write, process_alive, process_stamp
-from agent_room.common import fingerprint
-from agent_room import __version__
-from agent_room.native import claude_agents, owned_descendants, start_claude, stop_claude, stop_descendants
-from agent_room.package import PATTERNS
-from agent_room.store import Store
+from ihav_agent_room.common import PLUGIN_ROOT, RoomError, atomic_write, process_alive, process_stamp
+from ihav_agent_room.common import fingerprint
+from ihav_agent_room import __version__
+from ihav_agent_room.native import claude_agents, owned_descendants, start_claude, stop_claude, stop_descendants
+from ihav_agent_room.package import PATTERNS
+from ihav_agent_room.store import Store
 from scripts import learning_smoke
 
 
 def smoke_main_name():
-    return "AGENT_ROOM_SMOKE_MAIN_" + uuid.uuid4().hex[:16]
+    return "IHAV_AGENT_ROOM_SMOKE_MAIN_" + uuid.uuid4().hex[:16]
 
 
 def _smoke_session_classification(agent, project, before_main, main_name):
@@ -152,19 +152,19 @@ def main():
     if not args.execute:
         print(json.dumps({"execute": False, "proposed_scope": scope}, indent=2))
         return 0
-    project = args.project.resolve() if args.project else Path(tempfile.mkdtemp(prefix="agent-room-live-")).resolve()
+    project = args.project.resolve() if args.project else Path(tempfile.mkdtemp(prefix="ihav-agent-room-live-")).resolve()
     if not project.is_dir() or any(project.iterdir()):
         parser.error("--project must be an existing empty scratch directory")
     session = None
     main_name = smoke_main_name()
-    env = dict(os.environ, AGENT_ROOM_MEMBER="CLAUDE_01",
-               AGENT_ROOM_PROJECT=str(project),
-               AGENT_ROOM_SKIP_ALIAS="1", CLAUDE_CODE_DISABLE_BG_EXIT_HANDOFF="1",
-               AGENT_ROOM_SMOKE_RUN_NAME=main_name)
+    env = dict(os.environ, IHAV_AGENT_ROOM_MEMBER="CLAUDE_01",
+               IHAV_AGENT_ROOM_PROJECT=str(project),
+               IHAV_AGENT_ROOM_SKIP_ALIAS="1", CLAUDE_CODE_DISABLE_BG_EXIT_HANDOFF="1",
+               IHAV_AGENT_ROOM_SMOKE_RUN_NAME=main_name)
     env.pop("CLAUDE_CODE_MESSAGING_TOKEN", None)
     env.pop("CLAUDE_CODE_MESSAGING_SOCKET", None)
     env.pop("CLAUDE_ENV_FILE", None)
-    env.pop("AGENT_ROOM_SESSION_ID", None)
+    env.pop("IHAV_AGENT_ROOM_SESSION_ID", None)
     env["PATH"] = str(PLUGIN_ROOT / "bin") + os.pathsep + env.get("PATH", "")
     source_files = sorted({str(path.relative_to(PLUGIN_ROOT))
                            for pattern in (*PATTERNS, "scripts/native_smoke.py", "scripts/learning_smoke.py")
@@ -188,7 +188,7 @@ def main():
                         raise RuntimeError("Learning pilot changed task, decision or approval state")
     def command(*command_args, text=None):
         guard()
-        result = subprocess.run([sys.executable, str(PLUGIN_ROOT / "bin/agent-room"), "--project", str(project),
+        result = subprocess.run([sys.executable, str(PLUGIN_ROOT / "bin/ihav-agent-room"), "--project", str(project),
                                  *command_args], env=env, cwd=project, input=text, text=True, capture_output=True, timeout=35)
         guard()
         data = json.loads(result.stdout)
@@ -215,12 +215,12 @@ def main():
         raise RuntimeError("Timed out: " + label)
     def send_and_check(member, peer=False):
         text = ("Authorized isolated integration smoke. Do not modify source, create tasks, spawn agents or call external services. "
-                "Run agent-room inbox, identify THIS message, and use agent-room ack with evidence 'native smoke received'. "
+                "Run ihav-agent-room inbox, identify THIS message, and use ihav-agent-room ack with evidence 'native smoke received'. "
                 "Do not send ACK-only messages. ")
         if peer:
-            text += ("For this one transport check only, then use agent-room send --to CLAUDE_01 --body with a quoted inline argument (no heredoc) to send ONE substantive result: "
+            text += ("For this one transport check only, then use ihav-agent-room send --to CLAUDE_01 --body with a quoted inline argument (no heredoc) to send ONE substantive result: "
                      "'Native roundtrip evidence: CODEX_EXPERT received and processed the smoke request. "
-                     "CLAUDE_01: acknowledge this peer message via agent-room ack, then stop without sending another peer message.'")
+                     "CLAUDE_01: acknowledge this peer message via ihav-agent-room ack, then stop without sending another peer message.'")
         message = command("send", "--to", member, text=text)
         report["messages"].append({"id": message["id"], "recipient": member})
         atomic_write(project / "native-smoke-report.json", json.dumps(report, indent=2))
@@ -247,7 +247,7 @@ def main():
         first = submit()
         artifact.write_text("Agent Room review fixture revision two\n")
         current = command("task", "show", task["id"])
-        denied = subprocess.run([sys.executable, str(PLUGIN_ROOT / "bin/agent-room"), "--project", str(project), "task", "update", task["id"],
+        denied = subprocess.run([sys.executable, str(PLUGIN_ROOT / "bin/ihav-agent-room"), "--project", str(project), "task", "update", task["id"],
             "--expected-version", str(current["version"])], env=env, cwd=project, input='{"state":"done"}', text=True, capture_output=True, timeout=15)
         if denied.returncode == 0 or json.loads(denied.stdout).get("error", {}).get("code") != "review_required":
             raise RuntimeError("Stale review incorrectly completed the task")
@@ -287,11 +287,11 @@ def main():
         native = asyncio.run(start_claude(project, None, False, env, project / "native-main-launch.log",
                 member=main_name, timeout=min(args.timeout, 25), instructions=
                 "This is an authorized isolated Agent Room integration smoke. You are CLAUDE_01. "
-                "Process native peer messages with agent-room ack only; do not invent work, change settings or grant permissions."))
+                "Process native peer messages with ihav-agent-room ack only; do not invent work, change settings or grant permissions."))
         session = native["sessionId"]
         main_process = (native["pid"], process_stamp(native["pid"]))
         report["main_session"] = session
-        env["AGENT_ROOM_SESSION_ID"] = session
+        env["IHAV_AGENT_ROOM_SESSION_ID"] = session
         command("init", "--mode", "advisors")  # Smokes exercise all four members; new rooms default to pair.
         wait(lambda: store.room()["status"] == "running", "default native startup")
         if args.scenario == "review":

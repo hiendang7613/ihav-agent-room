@@ -12,8 +12,8 @@ recording internally; admin need not manage a knowledge taxonomy or approve ever
 ## Find before remembering
 
 ```sh
-agent-room --json knowledge search 'queue retry'
-agent-room --json knowledge show K-ID
+ihav-agent-room --json knowledge search 'queue retry'
+ihav-agent-room --json knowledge show K-ID
 ```
 
 Search uses all whitespace-separated terms as literal, case-insensitive substrings across
@@ -27,8 +27,8 @@ no matching recorded knowledge, not that the idea has never been tried.
 If useful terms are still unclear, optionally browse a small page of current lessons or open ideas:
 
 ```sh
-agent-room --json knowledge search --limit 4
-agent-room --json note search --limit 4
+ihav-agent-room --json knowledge search --limit 4
+ihav-agent-room --json note search --limit 4
 ```
 
 Results use insertion order; keep `next_after` when paging. Read the full sources and current limits
@@ -44,8 +44,8 @@ that it is correct. An experiment is evidence for its conditions, not a universa
 When an exchange was never summarized into a note or lesson, find it in this room's history:
 
 ```sh
-agent-room --json history --query 'queue retry' --limit 8
-agent-room --json history --kind prompts --query 'concise' --limit 8
+ihav-agent-room --json history --query 'queue retry' --limit 8
+ihav-agent-room --json history --kind prompts --query 'concise' --limit 8
 ```
 
 Matches keep full text, identity, origin/status and cursor. Read surrounding unfiltered history
@@ -57,7 +57,7 @@ This reads the project ledger; it does not scan personal native transcripts or o
 
 ## Save what changed your understanding
 
-Write a JSON file, then use `agent-room knowledge add --input FILE.json`:
+Write a JSON file, then use `ihav-agent-room knowledge add --input FILE.json`:
 
 ```json
 {
@@ -84,7 +84,7 @@ The committed record is immediately available to every member in this project. S
 a relevant peer when it helps their work:
 
 ```sh
-agent-room send --to CLAUDE_01 --knowledge K-ID --body 'This may explain the delay. Do you see a counterexample?'
+ihav-agent-room send --to CLAUDE_01 --knowledge K-ID --body 'This may explain the delay. Do you see a counterexample?'
 ```
 
 The optional link stores the lesson ID and version current at queue time. Inbox reads compare
@@ -119,8 +119,8 @@ about intent goes to main; routine reversible choices can use judgment within ex
 When evidence improves, update the existing record with a small JSON patch:
 
 ```sh
-agent-room knowledge update K-ID --expected-version 1 --input correction.json
-agent-room knowledge history K-ID
+ihav-agent-room knowledge update K-ID --expected-version 1 --input correction.json
+ihav-agent-room knowledge history K-ID
 ```
 
 All members may revise ordinary records; main maintains admin-stated ones. Concurrent edits

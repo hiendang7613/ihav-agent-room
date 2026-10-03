@@ -4,8 +4,8 @@ A native Claude Code + Codex team for this project. Describe the outcome in ordi
 CLAUDE_01 operates room coordination and reports useful progress, results and necessary decisions.
 Members can ask, brainstorm, challenge, help and share experience directly within existing authority.
 
-**Version 0.3.25, schema 3.** New rooms start in pair mode (CLAUDE_WORKER + CODEX_WORKER); `/agent-room:mode advisors`
-gives the four-member room, and `/agent-room:effort` sets member effort. 0.3.24 gave each member up to 20 direct messages and up to 20 FYI copies (peer broadcasts
+**Version 0.4.0, schema 3.** 0.4.0 renames Agent Room to ihav-agent-room (repository hiendang7613/ihav-agent-room). New rooms start in pair mode (CLAUDE_WORKER + CODEX_WORKER); `/ihav-agent-room:mode advisors`
+gives the four-member room, and `/ihav-agent-room:effort` sets member effort. 0.3.24 gave each member up to 20 direct messages and up to 20 FYI copies (peer broadcasts
 and admin relays) per dispatch pass, so neither class starves the other. 0.3.23 gave each member its own allowance
 and the three-zone admin reply shape. 0.3.22 sent queued messages to different
 members concurrently (each member's inbox stays in order). 0.3.21 added the admin's eight-section reply shape and installs
@@ -21,18 +21,18 @@ Requires macOS, Python 3.11+, Claude Code background sessions and Codex app-serv
 the native CLIs, then extract this archive to a stable directory. In Claude Code:
 
 ```text
-/plugin marketplace add /absolute/path/to/install/agent-room
-/plugin install agent-room@agent-room-marketplace
+/plugin marketplace add /absolute/path/to/install/ihav-agent-room
+/plugin install ihav-agent-room@ihav-agent-room-marketplace
 ```
 
 Reopen Claude Code in the project, then:
 
 ```text
-/agent-room:init
+/ihav-agent-room:init
 ```
 
 New rooms start in `pair` mode with 2 members: CLAUDE_WORKER (CLAUDE_01, your session) and CODEX_WORKER
-(CODEX_01). Run `/agent-room:mode advisors` for the four-member room with CLAUDE_EXPERT and CODEX_EXPERT.
+(CODEX_01). Run `/ihav-agent-room:mode advisors` for the four-member room with CLAUDE_EXPERT and CODEX_EXPERT.
 Existing rooms in the legacy modes `default` or `full` keep four members. Every room message queues a copy for the other
 members; broadcast copies are FYI, and only the direct addressee owns the request/task. The supervisor
 tries delivery as soon as its queue is available. A stopped/paused member keeps its queued messages.
@@ -48,12 +48,12 @@ native host requires one. This guidance does not guarantee agent compliance or t
 ## Control when needed
 
 ```text
-/agent-room:status
-/agent-room:mode
-/agent-room:effort
-/agent-room:stop
-/agent-room:start
-/agent-room:doctor
+/ihav-agent-room:status
+/ihav-agent-room:mode
+/ihav-agent-room:effort
+/ihav-agent-room:stop
+/ihav-agent-room:start
+/ihav-agent-room:doctor
 ```
 
 Status/doctor are read-only. Stop preserves unfinished work; manual stop persists until start.
@@ -62,8 +62,8 @@ leaving members' open tasks; a running room restarts its workers on their exact 
 
 ## Agent/operator references
 
-`agent-room guide` lists collaboration, learning, evidence, CLI and response-style references. Read a relevant topic
-on demand, such as `agent-room guide collaboration`. Local custom rules remain in force after an
+`ihav-agent-room guide` lists collaboration, learning, evidence, CLI and response-style references. Read a relevant topic
+on demand, such as `ihav-agent-room guide collaboration`. Local custom rules remain in force after an
 upgrade; the reference identifies this CLI's version and source hash. See [contracts](docs/v1.1.md)
 for upgrade, permissions, errors and recovery. Source/runtime context already loaded into a native
 session is not automatically replaced by this archive.
@@ -76,8 +76,8 @@ credentials, scope expansion and shipping retain their existing approval require
 To inspect this package without a room or provider tools:
 
 ```sh
-python3 bin/agent-room --json verify-package /path/to/agent-room.zip
+python3 bin/ihav-agent-room --json verify-package /path/to/ihav-agent-room.zip
 ```
 
 The verifier checks archive structure and hashes, not publisher authenticity. Default CLI contracts,
-schema, native permissions and model loops are unchanged in 0.3.25.
+schema, native permissions and model loops are unchanged in 0.4.0 apart from the rename.

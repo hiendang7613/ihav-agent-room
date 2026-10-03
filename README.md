@@ -7,7 +7,7 @@
 
 <p align="center">
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-4F46E5"></a>
-  <img alt="Version 0.3.25" src="https://img.shields.io/badge/version-0.3.25-4F46E5">
+  <img alt="Version 0.4.0" src="https://img.shields.io/badge/version-0.4.0-4F46E5">
   <img alt="Claude Code and Codex" src="https://img.shields.io/badge/members-Claude%20Code%20%2B%20Codex-0F172A">
   <img alt="Offline tests" src="https://img.shields.io/badge/offline%20tests-364-16A34A">
   <a href="https://github.com/hiendang7613/i-have-asd-ste100"><img alt="Reports by i-have-asd-ste100" src="https://img.shields.io/badge/reports-i--have--asd--ste100-F59E0B"></a>
@@ -47,12 +47,12 @@ Log in to each product with its own CLI first; Agent Room keeps native permissio
 
 ```bash
 # Claude Code
-claude plugin marketplace add hiendang7613/agent-room-plugin
-claude plugin install agent-room@agent-room-marketplace
+claude plugin marketplace add hiendang7613/ihav-agent-room
+claude plugin install ihav-agent-room@ihav-agent-room-marketplace
 
 # Codex
-codex plugin marketplace add hiendang7613/agent-room-plugin
-codex plugin add agent-room@agent-room-marketplace
+codex plugin marketplace add hiendang7613/ihav-agent-room
+codex plugin add ihav-agent-room@ihav-agent-room-marketplace
 ```
 
 Installing Agent Room in Claude Code also installs [i-have-asd-ste100](https://github.com/hiendang7613/i-have-asd-ste100), which shapes the reports you read.
@@ -65,11 +65,11 @@ Restart Claude Code afterwards.
 Open your project in Claude Code and run:
 
 ```text
-/agent-room:init
+/ihav-agent-room:init
 ```
 
 New rooms start in **pair** mode with 2 members: **CLAUDE_WORKER** (CLAUDE_01, the gateway you chat with) and **CODEX_WORKER** (CODEX_01).
-Run `/agent-room:mode advisors` for the four-member room, which adds **CLAUDE_EXPERT** and **CODEX_EXPERT**. Init output says the same.
+Run `/ihav-agent-room:mode advisors` for the four-member room, which adds **CLAUDE_EXPERT** and **CODEX_EXPERT**. Init output says the same.
 Init creates `agents_space/` and adds managed blocks to `AGENTS.md`, `CLAUDE.md` and `.gitignore`; your own content stays.
 The older name `/init-agents-space` still works.
 
@@ -85,13 +85,13 @@ You never write JSON, look up record IDs or route messages. The gateway handles 
 
 | Command | What it does |
 |---|---|
-| `/agent-room:init` | Creates the room in pair mode, or `--mode advisors`. |
-| `/agent-room:mode` | Shows the mode, or switches between `pair` (2 members) and `advisors` (4 members) now. |
-| `/agent-room:effort` | Shows or sets member effort; when you change your own `/effort`, every member follows (the first level seen is only the starting point). |
-| `/agent-room:status` | Shows members, tasks, queues and delivery gaps. Read-only. |
-| `/agent-room:stop` | Stops the room and keeps unfinished work. |
-| `/agent-room:start` | Resumes the same native sessions. |
-| `/agent-room:doctor` | Checks the installation and the room. Read-only. |
+| `/ihav-agent-room:init` | Creates the room in pair mode, or `--mode advisors`. |
+| `/ihav-agent-room:mode` | Shows the mode, or switches between `pair` (2 members) and `advisors` (4 members) now. |
+| `/ihav-agent-room:effort` | Shows or sets member effort; when you change your own `/effort`, every member follows (the first level seen is only the starting point). |
+| `/ihav-agent-room:status` | Shows members, tasks, queues and delivery gaps. Read-only. |
+| `/ihav-agent-room:stop` | Stops the room and keeps unfinished work. |
+| `/ihav-agent-room:start` | Resumes the same native sessions. |
+| `/ihav-agent-room:doctor` | Checks the installation and the room. Read-only. |
 
 <a name="reports"></a>
 
@@ -141,12 +141,12 @@ It works in any language. Say `stop ste mode` to pause it for a session.
 |---|---|
 | Supervisor | Starts members, delivers messages, and recovers the room after a crash |
 | Ledger | A local SQLite store of tasks, claims, messages, submissions, reviews and knowledge |
-| `agent-room` CLI | Tasks, claims, inbox, send, review, status and guides, used by the agents |
+| `ihav-agent-room` CLI | Tasks, claims, inbox, send, review, status and guides, used by the agents |
 | Hooks | Bring room context into each native Claude Code turn |
 | Codex bridge | Runs the Codex members through `codex app-server` |
 
-- **Delivery:** every room message is queued for the other members and sent as soon as the queue runs. Messages wait while the room or a member is stopped. `agent-room wakes` separates queued, attempted and acknowledged deliveries; none of these numbers proves an agent has read a message.
-- **Models:** the roster requests Sonnet 5.5, Luna 6, Opus 5.5 and Sol 6.1 at `xhigh` effort. CLAUDE_01 is your own session, so the room does not change its model. `agent-room status` shows requested settings next to what the host reports.
+- **Delivery:** every room message is queued for the other members and sent as soon as the queue runs. Messages wait while the room or a member is stopped. `ihav-agent-room wakes` separates queued, attempted and acknowledged deliveries; none of these numbers proves an agent has read a message.
+- **Models:** the roster requests Sonnet 5.5, Luna 6, Opus 5.5 and Sol 6.1 at `xhigh` effort. CLAUDE_01 is your own session, so the room does not change its model. `ihav-agent-room status` shows requested settings next to what the host reports.
 - **Authority:** a large scope change, provider cost, credentials, commit, push, publish and deploy still need your approval. A peer's idea grants no permission, and a delivered message is not proof of work.
 
 Details: [collaboration guide](templates/conventions/collaboration.md), [learning guide](templates/conventions/learning.md),

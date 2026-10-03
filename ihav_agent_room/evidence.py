@@ -3,7 +3,7 @@
 import hashlib
 from pathlib import Path
 
-from agent_room.common import RoomError, dumps, scoped_path
+from ihav_agent_room.common import RoomError, dumps, scoped_path
 
 
 def digest(value):

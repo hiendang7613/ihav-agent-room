@@ -10,26 +10,26 @@ import subprocess
 import sys
 import time
 
-from agent_room import __version__
-from agent_room.common import GATEWAY, MEMBERS, MODES, RoomError, acting_member, canonical_member, dumps, fingerprint, process_alive
-from agent_room.evidence import matches_terms
-from agent_room.guides import GUIDES, read_guide
-from agent_room.hooks import handle
-from agent_room.knowledge import Knowledge
-from agent_room.native import doctor
-from agent_room.package_verifier import verify_archive
-from agent_room.roster import EFFORT_LEVELS, NEW_ROOM_MODE, SELECTABLE_MODES
-from agent_room.runtime import Supervisor, approval_response, change_mode, request_stop, start_room
-from agent_room.scaffold import initialize, install_alias
-from agent_room.schema import migrate
-from agent_room.store import NOTE_STATES, Store
+from ihav_agent_room import __version__
+from ihav_agent_room.common import GATEWAY, MEMBERS, MODES, RoomError, acting_member, canonical_member, dumps, fingerprint, process_alive
+from ihav_agent_room.evidence import matches_terms
+from ihav_agent_room.guides import GUIDES, read_guide
+from ihav_agent_room.hooks import handle
+from ihav_agent_room.knowledge import Knowledge
+from ihav_agent_room.native import doctor
+from ihav_agent_room.package_verifier import verify_archive
+from ihav_agent_room.roster import EFFORT_LEVELS, NEW_ROOM_MODE, SELECTABLE_MODES
+from ihav_agent_room.runtime import Supervisor, approval_response, change_mode, request_stop, start_room
+from ihav_agent_room.scaffold import initialize, install_alias
+from ihav_agent_room.schema import migrate
+from ihav_agent_room.store import NOTE_STATES, Store
 
 
 def mode_note(mode):
     if mode == "pair":
         return ("New rooms start in pair mode: 2 members, CLAUDE_WORKER and CODEX_WORKER. "
-                "Run /agent-room:mode advisors for the four-member room.")
-    return f"This room runs in {mode} mode with {len(MODES[mode])} members. Run /agent-room:mode pair or advisors to switch."
+                "Run /ihav-agent-room:mode advisors for the four-member room.")
+    return f"This room runs in {mode} mode with {len(MODES[mode])} members. Run /ihav-agent-room:mode pair or advisors to switch."
 
 
 class RoomParser(argparse.ArgumentParser):
@@ -68,7 +68,7 @@ def wait_for_inbox(read, seconds):
 def parser():
     root = RoomParser(description="Coordinate native Claude Code/Codex sessions. No provider calls in help/doctor/status.")
     root.add_argument("--version", action="version", version=__version__)
-    root.add_argument("--project", default=os.environ.get("AGENT_ROOM_PROJECT", os.getcwd()))
+    root.add_argument("--project", default=os.environ.get("IHAV_AGENT_ROOM_PROJECT", os.getcwd()))
     root.add_argument("--json", action="store_true", help="Machine-readable result without progress text")
     commands = root.add_subparsers(dest="command", required=True)
     guide = commands.add_parser("guide", help="Read one current plugin guide, or list topics; no room or native tools needed",
@@ -273,15 +273,15 @@ def run(args):
             checks = doctor()
             if not checks["ok"]:
                 raise RoomError("Dependencies are missing. No project files changed.", "dependency", checks=checks)
-            if not os.environ.get("AGENT_ROOM_SESSION_ID"):
-                raise RoomError("Run /agent-room:init in Claude Code, or use init --no-start for files only", "identity")
+            if not os.environ.get("IHAV_AGENT_ROOM_SESSION_ID"):
+                raise RoomError("Run /ihav-agent-room:init in Claude Code, or use init --no-start for files only", "identity")
         # New rooms start in pair mode (admin decision 2026-10-03); the library default keeps four members.
         room = initialize(args.project, args.mode or (None if store.exists() else NEW_ROOM_MODE))
         mode_info = {"mode": room["mode"], "members": list(MODES[room["mode"]]), "mode_note": mode_note(room["mode"])}
         if args.no_start:
             return {"initialized": True, "started": False, "room": room, **mode_info}
-        return {**start_room(store, os.environ.get("AGENT_ROOM_SESSION_ID"),
-                             permission_mode=os.environ.get("AGENT_ROOM_PERMISSION_MODE", "default")), **mode_info}
+        return {**start_room(store, os.environ.get("IHAV_AGENT_ROOM_SESSION_ID"),
+                             permission_mode=os.environ.get("IHAV_AGENT_ROOM_PERMISSION_MODE", "default")), **mode_info}
     if command == "_serve":
         asyncio.run(Supervisor(store, args.generation).run())
         room = store.room()
@@ -289,8 +289,8 @@ def run(args):
             raise RoomError("Supervisor failed", "native", detail=room["error"])
         return {"stopped": room["status"] == "stopped"}
     if command == "start":
-        return start_room(store, os.environ.get("AGENT_ROOM_SESSION_ID"), args.mode,
-                          os.environ.get("AGENT_ROOM_PERMISSION_MODE", "default"))
+        return start_room(store, os.environ.get("IHAV_AGENT_ROOM_SESSION_ID"), args.mode,
+                          os.environ.get("IHAV_AGENT_ROOM_PERMISSION_MODE", "default"))
     if command == "mode":
         if not args.mode:
             status = store.status()
@@ -449,7 +449,7 @@ def run(args):
             body = read_input(args.body_file)
             if not body.strip() or not args.source_ref.strip():
                 raise RoomError("Recovery requires original human text and its source reference")
-            receipt = store.intake(os.environ["AGENT_ROOM_SESSION_ID"], body, origin="manual_recovery:" + args.source_ref)
+            receipt = store.intake(os.environ["IHAV_AGENT_ROOM_SESSION_ID"], body, origin="manual_recovery:" + args.source_ref)
             notification = store.broadcast_gateway_prompt(body, "recovery\0" + args.source_ref,
                                                           receipt_id=receipt, provenance_state="manual_recovery")
             return {"receipt": receipt, "origin": "manual_recovery", "native_permission_approval_eligible": False,

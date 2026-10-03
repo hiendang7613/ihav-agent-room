@@ -8,14 +8,14 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from agent_room import __version__
-from agent_room.common import PLUGIN_ROOT, RoomError
-from agent_room.package import build
+from ihav_agent_room import __version__
+from ihav_agent_room.common import PLUGIN_ROOT, RoomError
+from ihav_agent_room.package import build
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output", type=Path, default=PLUGIN_ROOT / "dist" / f"agent-room-{__version__}.zip")
+    parser.add_argument("--output", type=Path, default=PLUGIN_ROOT / "dist" / f"ihav-agent-room-{__version__}.zip")
     args = parser.parse_args()
     try:
         print(json.dumps(build(args.output), indent=2))

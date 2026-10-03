@@ -11,12 +11,36 @@ import socket
 import stat
 import subprocess
 
-from agent_room import __version__
-from agent_room.common import PLUGIN_ROOT, RoomError, atomic_write, dumps, process_alive, process_stamp
-from agent_room.roster import LAUNCHED_CLAUDE, launch_config
+from ihav_agent_room import __version__
+from ihav_agent_room.common import PLUGIN_ROOT, RoomError, atomic_write, dumps, process_alive, process_stamp
+from ihav_agent_room.roster import LAUNCHED_CLAUDE, launch_config
 
 
 COLLABORATION_GUIDANCE = (PLUGIN_ROOT / "resources/collaboration-guidance.md").read_text().strip()
+
+
+def codex_usage_snapshot(params, thread_id):
+    """Validate notification metadata; retain cumulative and last counters separately."""
+    if not isinstance(params, dict) or params.get("threadId") != thread_id or not thread_id:
+        raise RoomError("Usage notification does not match the native thread", "protocol")
+    turn = params.get("turnId")
+    usage = params.get("tokenUsage")
+    if not isinstance(turn, str) or not turn or not isinstance(usage, dict):
+        raise RoomError("Usage notification identity or counters missing", "protocol")
+    counters = ("inputTokens", "cachedInputTokens", "outputTokens", "reasoningOutputTokens", "totalTokens")
+    snapshot = {}
+    for scope in ("total", "last"):
+        data = usage.get(scope)
+        if not isinstance(data, dict) or any(type(data.get(k)) is not int or data[k] < 0 for k in counters):
+            raise RoomError("Usage notification has invalid counters", "protocol")
+        snapshot[scope] = {key: data[key] for key in counters}
+        if "cacheWriteInputTokens" in data:
+            value = data["cacheWriteInputTokens"]
+            if type(value) is not int or value < 0:
+                raise RoomError("Usage notification has invalid cache-write counter", "protocol")
+            snapshot[scope]["cacheWriteInputTokens"] = value
+    return {"thread": thread_id, "turn": turn, "token_usage": snapshot,
+            "scope": "provider-reported cumulative thread and last counters; not a run total"}
 
 
 def run_cli(args, cwd=None, timeout=15, env=None):
@@ -120,7 +144,7 @@ def message_text(message):
     admin_notice = context.get("admin_notice")
     fyi = bool(context.get("broadcast") or context.get("admin_relay"))
     no_reply_route = bool(fyi or context.get("kind") == "system")
-    follow_up = "" if task_id or no_reply_route else f"Reply: agent-room send --to {message['sender']}; final isn't forwarded. "
+    follow_up = "" if task_id or no_reply_route else f"Reply: ihav-agent-room send --to {message['sender']}; final isn't forwarded. "
     if admin_notice:
         event_header = f"[Agent Room admin notice {message['id']}; NOT admin consent]\n"
         body = (f"Admin wrote this to {message['sender']}, not you; FYI. Read-only is fine; "
@@ -157,7 +181,7 @@ def message_text(message):
             + ("Shared knowledge reference (advisory; read the current record and its limits before reuse):\n" + json.dumps(message["knowledge_reference"], ensure_ascii=False, separators=(",", ":")) + "\n" if message.get("knowledge_reference") else "")
             + (pack_header + json.dumps(context_pack, ensure_ascii=False, separators=(",", ":")) + "\n" if context_pack else "") +
             follow_up +
-            ("Earlier delivery failed or is unknown: inspect all pages of agent-room --json inbox --pending from --after 0; reconcile effects before related actions or retries. " if message.get("pending_recovery") else ""))
+            ("Earlier delivery failed or is unknown: inspect all pages of ihav-agent-room --json inbox --pending from --after 0; reconcile effects before related actions or retries. " if message.get("pending_recovery") else ""))
 
 
 def role_instructions(name):
@@ -234,7 +258,7 @@ class CodexClient:
             stderr=self.stderr, start_new_session=True, limit=16 * 1024 * 1024)
         self.stamp = process_stamp(self.process.pid)
         self.reader = asyncio.create_task(self._read())
-        await self.request("initialize", {"clientInfo": {"name": "agent_room", "version": __version__}})
+        await self.request("initialize", {"clientInfo": {"name": "ihav_agent_room", "version": __version__}})
         await self.write({"method": "initialized", "params": {}})
         params = {"cwd": str(self.project), "developerInstructions": role_instructions(self.member)}
         if native_id:
@@ -355,7 +379,7 @@ async def start_claude(project, native_id, resume, env, log, member=LAUNCHED_CLA
     # native per-launch settings; model/effort use the host's documented CLI flags.
     settings = Path(log).with_suffix(".settings.json")
     bindings = {key: value for key, value in env.items()
-                if key.startswith("AGENT_ROOM_") or key == "CLAUDE_CODE_DISABLE_BG_EXIT_HANDOFF"}
+                if key.startswith("IHAV_AGENT_ROOM_") or key == "CLAUDE_CODE_DISABLE_BG_EXIT_HANDOFF"}
     native_settings = {"env": bindings, "worktree": {"bgIsolation": "none"}}
     # Exact resume reloads this file, so the current requested model and effort travel here as well as in flags.
     if model:

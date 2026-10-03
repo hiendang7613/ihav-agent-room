@@ -8,10 +8,10 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from agent_room.common import PLUGIN_ROOT
-from agent_room.knowledge import Knowledge
-from agent_room.scaffold import initialize
-from agent_room.store import Store
+from ihav_agent_room.common import PLUGIN_ROOT
+from ihav_agent_room.knowledge import Knowledge
+from ihav_agent_room.scaffold import initialize
+from ihav_agent_room.store import Store
 from scripts.learning_smoke import Deadline, PREFIX, delivery_settled, prompt, result
 
 

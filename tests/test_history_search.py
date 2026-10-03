@@ -7,9 +7,9 @@ import sys
 import unittest
 from unittest.mock import patch
 
-from agent_room.cli import parser, run
-from agent_room.common import PLUGIN_ROOT
-from agent_room.store import MAX_MESSAGE_ID_BYTES, Store
+from ihav_agent_room.cli import parser, run
+from ihav_agent_room.common import PLUGIN_ROOT
+from ihav_agent_room.store import MAX_MESSAGE_ID_BYTES, Store
 from test_evidence import EvidenceFixture
 
 
@@ -104,8 +104,8 @@ class HistorySearchTests(EvidenceFixture, unittest.TestCase):
                 patch.object(Store, "status", side_effect=AssertionError("History rebuilt status")), \
                 patch.object(Store, "review_status", side_effect=AssertionError("History read unrelated sources")):
             self.assertEqual(self.history("--query", "taskless alternative")["items"][0]["id"], message["id"])
-        env = dict(os.environ, PATH="", AGENT_ROOM_MEMBER="", AGENT_ROOM_SESSION_ID="", AGENT_ROOM_BINDING="")
-        command = [sys.executable, str(PLUGIN_ROOT / "bin/agent-room"), "--project", str(self.project), "--json", "history"]
+        env = dict(os.environ, PATH="", IHAV_AGENT_ROOM_MEMBER="", IHAV_AGENT_ROOM_SESSION_ID="", IHAV_AGENT_ROOM_BINDING="")
+        command = [sys.executable, str(PLUGIN_ROOT / "bin/ihav-agent-room"), "--project", str(self.project), "--json", "history"]
         for flags, code in ((["--query", "taskless alternative"], 0), (["--query", "x" * 201], 1),
                             (["--query", "missing", "--limit", "0"], 1), (["--after", "-1"], 1),
                             (["--limit", "201"], 1), (["--kind", "invalid"], 2)):

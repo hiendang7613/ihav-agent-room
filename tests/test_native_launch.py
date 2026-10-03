@@ -6,8 +6,8 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch
 
-from agent_room.common import RoomError
-from agent_room.native import start_claude
+from ihav_agent_room.common import RoomError
+from ihav_agent_room.native import start_claude
 from scripts.native_smoke import _smoke_known_main_state
 
 
@@ -30,8 +30,8 @@ class NativeLaunchTests(unittest.TestCase):
 
             for resume, native_id in ((False, None), (True, "existing-session")):
                 with self.subTest(resume=resume), \
-                        patch("agent_room.native.claude_agents", return_value=[]), \
-                        patch("agent_room.native.asyncio.create_subprocess_exec", new=failed_launch):
+                        patch("ihav_agent_room.native.claude_agents", return_value=[]), \
+                        patch("ihav_agent_room.native.asyncio.create_subprocess_exec", new=failed_launch):
                     with self.assertRaises(RoomError):
                         asyncio.run(start_claude(project, native_id, resume, {"PATH": "/usr/bin"},
                             project / "runtime" / "CLAUDE_EXPERT.log", member="CLAUDE_EXPERT",
@@ -109,15 +109,15 @@ class NativeLaunchTests(unittest.TestCase):
     def test_failed_background_launch_reports_retained_member_log(self):
         with tempfile.TemporaryDirectory(prefix="native launch ") as directory:
             project = Path(directory)
-            log = project / ".agent-room" / "runtime" / "CLAUDE_EXPERT.log"
+            log = project / ".ihav-agent-room" / "runtime" / "CLAUDE_EXPERT.log"
 
             async def failed_launch(*args, **kwargs):
                 kwargs["stderr"].write("fixture native launch diagnostic\n")
                 kwargs["stderr"].flush()
                 return FailedProcess()
 
-            with patch("agent_room.native.claude_agents", return_value=[]), \
-                    patch("agent_room.native.asyncio.create_subprocess_exec", new=failed_launch):
+            with patch("ihav_agent_room.native.claude_agents", return_value=[]), \
+                    patch("ihav_agent_room.native.asyncio.create_subprocess_exec", new=failed_launch):
                 with self.assertRaises(RoomError) as caught:
                     asyncio.run(start_claude(project, None, False, {"PATH": "/usr/bin"}, log,
                                              member="CLAUDE_EXPERT"))

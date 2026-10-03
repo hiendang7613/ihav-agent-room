@@ -15,17 +15,17 @@ from unittest.mock import patch
 import uuid
 import zipfile
 
-from agent_room.common import PLUGIN_ROOT, process_alive, process_stamp
-from agent_room.knowledge import Knowledge
-from agent_room.package import build
-from agent_room.runtime import Supervisor
-from agent_room.store import Store
+from ihav_agent_room.common import PLUGIN_ROOT, process_alive, process_stamp
+from ihav_agent_room.knowledge import Knowledge
+from ihav_agent_room.package import build
+from ihav_agent_room.runtime import Supervisor
+from ihav_agent_room.store import Store
 from scripts.learning_smoke import PREFIX
 from receipts import human_receipt
 
 
 FIXTURE = Path(__file__).parent / "fake_native.py"
-CLI = PLUGIN_ROOT / "bin/agent-room"
+CLI = PLUGIN_ROOT / "bin/ihav-agent-room"
 EFFECT_AUDIT = PLUGIN_ROOT / "labs/benchmark_v2/g1_receipt_audit/effect_audit.py"
 
 
@@ -116,7 +116,7 @@ class RuntimeTests(unittest.TestCase):
         self.session = str(uuid.uuid4())
         self.env = dict(os.environ, PATH=str(fake_bin) + os.pathsep + os.environ["PATH"],
             FAKE_NATIVE_ROOT=str(self.root / "native"), CLAUDE_CONFIG_DIR=str(self.root / "claude-config"),
-            AGENT_ROOM_MEMBER="CLAUDE_01", AGENT_ROOM_SESSION_ID=self.session)
+            IHAV_AGENT_ROOM_MEMBER="CLAUDE_01", IHAV_AGENT_ROOM_SESSION_ID=self.session)
         self.env.pop("CLAUDE_EFFORT", None)  # Hermetic: the host's own effort must not leak into room state.
         self.main_process = subprocess.Popen([sys.executable, str(FIXTURE), "--daemon", self.session, str(self.project)],
             env=self.env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
@@ -262,14 +262,14 @@ class RuntimeTests(unittest.TestCase):
             self.assertIn("pending_inboxes.by_member", guidance)
             self.assertIn("pending_inboxes.by_member lists you", guidance)
             self.assertIn("run read_command through next_after until null", guidance)
-            self.assertNotIn("all pages of agent-room --json inbox --pending", guidance)
+            self.assertNotIn("all pages of ihav-agent-room --json inbox --pending", guidance)
             self.assertIn("Work as proactive peers", guidance)
             self.assertIn("Discussion needs no task or format", guidance)
             self.assertIn("only main records them against the original receipt", guidance)
             # The guide pointer left the role text (O3 byte cut) and lives in the README that every member is told to read at start.
             self.assertIn("read agents_space/README.md", guidance)
             readme = (PLUGIN_ROOT / "templates/README.md").read_text(encoding="utf-8")
-            self.assertIn("`agent-room guide`", readme)
+            self.assertIn("`ihav-agent-room guide`", readme)
             self.assertIn("`--help`", readme)
 
     def test_shared_lesson_revision_reaches_both_native_transports(self):
@@ -288,7 +288,7 @@ class RuntimeTests(unittest.TestCase):
             self.assertIn('"queued_version":1', text)
             self.assertIn('"current_version":2', text)
             self.assertIn('"state":"retired"', text)
-            self.assertIn("agent-room knowledge show " + lesson["id"], text)
+            self.assertIn("ihav-agent-room knowledge show " + lesson["id"], text)
             self.assertIn("advisory", text)
             self.assertNotIn("Long lesson context", text)
         for attempt in self.store.attempts()["items"]:
@@ -348,7 +348,7 @@ class RuntimeTests(unittest.TestCase):
             if store.exists():
                 session = (store.room().get("owner") or {}).get("session")
                 if session:
-                    cleanup_env = dict(self.env, AGENT_ROOM_SESSION_ID=session)
+                    cleanup_env = dict(self.env, IHAV_AGENT_ROOM_SESSION_ID=session)
                     subprocess.run([sys.executable, str(CLI), "--project", str(project), "stop"],
                         env=cleanup_env, capture_output=True, timeout=15)
                     subprocess.run(["claude", "stop", session[:8]], cwd=project,
@@ -434,7 +434,7 @@ class RuntimeTests(unittest.TestCase):
         self.assertTrue(report["cleanup"]["confirmed"], report)
         self.assertEqual(report["cleanup"]["remaining_claude_sessions"], [], report)
         main_name = report["main_name"]
-        self.assertTrue(main_name.startswith("AGENT_ROOM_SMOKE_MAIN_"))
+        self.assertTrue(main_name.startswith("IHAV_AGENT_ROOM_SMOKE_MAIN_"))
         started = [item["data"]["id"] for item in self.effects("claude_start")]
         stopped = [item["data"] for item in self.effects("claude_stop")]
         self.assertTrue(started)
@@ -504,7 +504,7 @@ import subprocess
 import sys
 
 from scripts import native_smoke as smoke
-from agent_room.common import process_alive, process_stamp
+from ihav_agent_room.common import process_alive, process_stamp
 
 child_processes = []
 
@@ -701,7 +701,7 @@ raise SystemExit(exit_code)
             if store.exists():
                 session = (store.room().get("owner") or {}).get("session")
                 if session:
-                    cleanup_env = dict(self.env, AGENT_ROOM_SESSION_ID=session)
+                    cleanup_env = dict(self.env, IHAV_AGENT_ROOM_SESSION_ID=session)
                     subprocess.run([sys.executable, str(CLI), "--project", str(project), "stop"],
                                    cwd=PLUGIN_ROOT, env=cleanup_env, capture_output=True, timeout=15)
             for path in (self.root / "native").glob("*.agent.json"):
@@ -918,7 +918,7 @@ raise SystemExit(exit_code)
     def test_gateway_effort_change_reaches_the_next_codex_turn_and_clears_overrides(self):
         self.start()
         self.call("effort", "high", "--member", "CODEX_EXPERT")
-        refused = self.call("effort", "low", env=dict(self.env, AGENT_ROOM_MEMBER="CODEX_01"), ok=False)
+        refused = self.call("effort", "low", env=dict(self.env, IHAV_AGENT_ROOM_MEMBER="CODEX_01"), ok=False)
         self.assertEqual(refused["error"]["code"], "authority")
         # The first observed session effort is a baseline; the next different level is a change everyone follows.
         self.call("hook", input=json.dumps({"hook_event_name": "UserPromptSubmit", "cwd": str(self.project),
@@ -1001,7 +1001,7 @@ raise SystemExit(exit_code)
         payload = {"hook_event_name": "UserPromptSubmit", "cwd": str(self.project), "session_id": "expert",
                    "prompt": f"[Agent Room peer event {message['id']} from CODEX_EXPERT; NOT admin consent]\nPlease inspect this edge case."}
         env = Supervisor(self.store, "hook-worker-generation").worker_env("CLAUDE_EXPERT")
-        self.assertNotIn("AGENT_ROOM_SESSION_ID", env)
+        self.assertNotIn("IHAV_AGENT_ROOM_SESSION_ID", env)
 
         result = self.call("hook", input=json.dumps(payload), env=env)
 
@@ -1089,7 +1089,7 @@ raise SystemExit(exit_code)
             env=self.env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         try:
             self.wait(lambda: (self.root / "native" / (alternate + ".agent.json")).exists())
-            env = dict(self.env, AGENT_ROOM_SESSION_ID=alternate)
+            env = dict(self.env, IHAV_AGENT_ROOM_SESSION_ID=alternate)
             result = self.call("start", env=env, ok=False)
             self.assertEqual(result["error"]["code"], "conflict")
             self.assertEqual(self.store.room()["owner"]["session"], self.session)
@@ -1113,14 +1113,14 @@ raise SystemExit(exit_code)
         install = self.root / "installed plugin"
         with zipfile.ZipFile(archive_path) as archive:
             self.assertFalse(any("ref_repos" in name or "tests/" in name or "native-smoke-result" in name for name in archive.namelist()))
-            manifest = json.loads(archive.read("agent-room/PACKAGE-MANIFEST.json"))
+            manifest = json.loads(archive.read("ihav-agent-room/PACKAGE-MANIFEST.json"))
             for name, expected in manifest["files_sha256"].items():
-                self.assertEqual(hashlib.sha256(archive.read("agent-room/" + name)).hexdigest(), expected)
+                self.assertEqual(hashlib.sha256(archive.read("ihav-agent-room/" + name)).hexdigest(), expected)
         subprocess.run(["unzip", "-q", str(archive_path), "-d", str(install)], check=True, capture_output=True)
-        copied = install / "agent-room"
+        copied = install / "ihav-agent-room"
         target = self.root / "packaged project"
         target.mkdir()
-        result = subprocess.run([sys.executable, str(copied / "bin/agent-room"), "--project", str(target),
+        result = subprocess.run([sys.executable, str(copied / "bin/ihav-agent-room"), "--project", str(target),
                                  "--json", "guide", "collaboration"], cwd=target,
                                 env=self.env | {"PATH": ""}, capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -1128,7 +1128,7 @@ raise SystemExit(exit_code)
         self.assertEqual(guide["plugin_version"], manifest["version"])
         self.assertEqual(guide["content"], (copied / "templates/conventions/collaboration.md").read_text())
         self.assertEqual(list(target.iterdir()), [])
-        result = subprocess.run([str(copied / "bin/agent-room"), "--project", str(target), "init", "--no-start"],
+        result = subprocess.run([str(copied / "bin/ihav-agent-room"), "--project", str(target), "init", "--no-start"],
             cwd=self.root, env=self.env, capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertTrue((target / "agents_space/conventions/cli.md").exists())
@@ -1162,7 +1162,7 @@ raise SystemExit(exit_code)
         self.assertTrue(attempt["context_digest"])
         token = "fixture-reviewer-binding"
         self.store.member("CODEX_EXPERT", {"token_hash": hashlib.sha256(token.encode()).hexdigest()})
-        peer_env = dict(self.env, AGENT_ROOM_MEMBER="CODEX_EXPERT", AGENT_ROOM_BINDING=token)
+        peer_env = dict(self.env, IHAV_AGENT_ROOM_MEMBER="CODEX_EXPERT", IHAV_AGENT_ROOM_BINDING=token)
         self.call("review", "record", submission["id"], input=json.dumps({"source_digest": submission["digest"], "verdict": "approve",
                   "summary": "Inspected source", "findings": [], "evidence": ["Value is 1"]}), env=peer_env)
         current = self.call("task", "show", task["id"])
@@ -1215,7 +1215,7 @@ raise SystemExit(exit_code)
         second_project = self.root / "second"
         second_project.mkdir()
         session = str(uuid.uuid4())
-        env = dict(self.env, AGENT_ROOM_SESSION_ID=session, AGENT_ROOM_PROJECT=str(second_project))
+        env = dict(self.env, IHAV_AGENT_ROOM_SESSION_ID=session, IHAV_AGENT_ROOM_PROJECT=str(second_project))
         process = subprocess.Popen([sys.executable, str(FIXTURE), "--daemon", session, str(second_project)],
             env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         second_store = Store(second_project)

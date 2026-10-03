@@ -5,7 +5,7 @@ argument-hint: "[--mode default|full]"
 disable-model-invocation: true
 ---
 
-Run `agent-room --json start` in the project, preserving the saved mode.
+Run `ihav-agent-room --json start` in the project, preserving the saved mode.
 Accept only no arguments, `--mode default` or `--mode full`, selecting the corresponding
 literal command. Both modes use the same four members; `full` is a compatibility alias. Never
 evaluate arbitrary $ARGUMENTS as shell code.

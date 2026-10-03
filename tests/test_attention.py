@@ -1,9 +1,9 @@
 import unittest
 from unittest.mock import patch
 
-from agent_room.cli import parser, run
-from agent_room.common import MEMBERS, dumps
-from agent_room.store import Store
+from ihav_agent_room.cli import parser, run
+from ihav_agent_room.common import MEMBERS, dumps
+from ihav_agent_room.store import Store
 from test_evidence import EvidenceFixture
 
 
@@ -42,8 +42,8 @@ class AttentionTests(EvidenceFixture, unittest.TestCase):
         self.store.project_views()
         before_db = self.database_dump()
         before_files = {str(p): p.read_bytes() for p in self.project.rglob("*") if p.is_file()}
-        with patch("agent_room.cli.start_room", side_effect=AssertionError("Read started a room")), \
-                patch("agent_room.cli.process_alive", return_value=False):
+        with patch("ihav_agent_room.cli.start_room", side_effect=AssertionError("Read started a room")), \
+                patch("ihav_agent_room.cli.process_alive", return_value=False):
             status = run(parser().parse_args(["--project", str(self.project), "status"]))
             context = run(parser().parse_args(["--project", str(self.project), "task", "context", task["id"]]))
         self.assertIn("attention", status)
@@ -85,7 +85,7 @@ class AttentionTests(EvidenceFixture, unittest.TestCase):
                 item = self.only("CLAUDE_01", task)
                 self.assertEqual(item["reason"], reason)
                 self.assertEqual(item["review"]["receipt"], receipt["id"])
-                self.assertIn("agent-room review show " + receipt["id"], item["read_commands"])
+                self.assertIn("ihav-agent-room review show " + receipt["id"], item["read_commands"])
                 self.assertEqual(self.items("CODEX_EXPERT", task), [])
 
     def test_peer_approval_points_to_main_for_completion_and_done_disappears(self):
@@ -189,5 +189,5 @@ class AttentionTests(EvidenceFixture, unittest.TestCase):
         self.assertIn("attention", pack)
         self.assertTrue(pack["truncated"])
         self.assertLess(len(dumps(pack)), 13000)
-        self.assertIn("agent-room task show " + task["id"], pack["full_record_commands"])
-        self.assertIn("agent-room task context " + task["id"], pack["attention"]["by_member"]["CLAUDE_01"][0]["read_commands"])
+        self.assertIn("ihav-agent-room task show " + task["id"], pack["full_record_commands"])
+        self.assertIn("ihav-agent-room task context " + task["id"], pack["attention"]["by_member"]["CLAUDE_01"][0]["read_commands"])

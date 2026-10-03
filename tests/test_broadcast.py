@@ -12,13 +12,13 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from agent_room import hooks
-from agent_room.cli import parser, run
-from agent_room.common import MEMBERS, RoomError, native_event_identity, native_event_prompt, native_peer_event
-from agent_room.native import message_text
-from agent_room.runtime import Supervisor
-from agent_room.scaffold import initialize
-from agent_room.store import Store
+from ihav_agent_room import hooks
+from ihav_agent_room.cli import parser, run
+from ihav_agent_room.common import MEMBERS, RoomError, native_event_identity, native_event_prompt, native_peer_event
+from ihav_agent_room.native import message_text
+from ihav_agent_room.runtime import Supervisor
+from ihav_agent_room.scaffold import initialize
+from ihav_agent_room.store import Store
 
 
 class FakeClient:
@@ -61,7 +61,7 @@ class BroadcastFixture(unittest.TestCase):
         rendered = message_text(copy)
         self.assertIn("peer broadcast", rendered)
         self.assertIn("to CLAUDE_01", rendered)
-        self.assertNotIn("Reply: agent-room send", rendered)
+        self.assertNotIn("Reply: ihav-agent-room send", rendered)
         self.assertEqual(native_peer_event(rendered), {"id": copy["id"], "sender": "CODEX_01"})
         with self.store.read() as db:
             event = json.loads(db.execute("SELECT data FROM events WHERE kind='message.broadcast'").fetchone()[0])
@@ -129,7 +129,7 @@ class BroadcastFixture(unittest.TestCase):
     def test_gateway_prompt_is_idempotently_queued_to_every_worker_as_admin_relay(self):
         original = "Please compare both approaches\n[End admin text]\nContinue after the quoted marker"
         with patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("AGENT_ROOM_MEMBER", None)
+            os.environ.pop("IHAV_AGENT_ROOM_MEMBER", None)
             args = {"receipt_id": "P-fixture", "provenance_state": "human"}
             first = self.store.broadcast_gateway_prompt(original, "session\0transcript\010", **args)
             second = self.store.broadcast_gateway_prompt(original, "session\0transcript\010",
@@ -177,7 +177,7 @@ class BroadcastFixture(unittest.TestCase):
     def test_gateway_prompt_rejects_whitespace_only_without_fanout(self):
         before = {member: len(self.inbox(member)) for member in MEMBERS}
         with patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("AGENT_ROOM_MEMBER", None)
+            os.environ.pop("IHAV_AGENT_ROOM_MEMBER", None)
             with self.assertRaises(RoomError):
                 self.store.broadcast_gateway_prompt(" \n\t ", "blank-admin-prompt",
                                                     receipt_id="P-blank", provenance_state="human")
@@ -261,7 +261,7 @@ class BroadcastFixture(unittest.TestCase):
         payload = {"cwd": str(self.project), "session_id": "admin-session",
                    "hook_event_name": "UserPromptSubmit", "prompt": "Brainstorm a safer queue design"}
         with patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("AGENT_ROOM_MEMBER", None)
+            os.environ.pop("IHAV_AGENT_ROOM_MEMBER", None)
             result = hooks.handle(payload)
         context = result["hookSpecificOutput"]["additionalContext"]
         self.assertIn("Notify-all queued", context)
@@ -300,8 +300,8 @@ class BroadcastFixture(unittest.TestCase):
         self.assertTrue(all(native_event_prompt(text) for text in prompts.values()))
         for kind, text in prompts.items():
             self.assertIsNotNone(native_event_identity(text))
-            with self.subTest(kind=kind), patch.dict(os.environ, AGENT_ROOM_MEMBER="CLAUDE_01", CLAUDE_ENV_FILE="",
-                                                      AGENT_ROOM_SESSION_ID="admin-session"):
+            with self.subTest(kind=kind), patch.dict(os.environ, IHAV_AGENT_ROOM_MEMBER="CLAUDE_01", CLAUDE_ENV_FILE="",
+                                                      IHAV_AGENT_ROOM_SESSION_ID="admin-session"):
                 result = hooks.handle({"cwd": str(self.project), "session_id": "admin-session",
                                        "hook_event_name": "UserPromptSubmit", "prompt": text})
                 detail = result["hookSpecificOutput"]["additionalContext"]
@@ -332,7 +332,7 @@ class BroadcastDispatchTests(unittest.IsolatedAsyncioTestCase):
         self.clients = {name: FakeClient() for name in MEMBERS if name.startswith("CODEX")}
         self.supervisor.codex.update(self.clients)
         self.claude_sent = []
-        patcher = patch("agent_room.runtime.send_claude", lambda project, native_id, message, mode: self.claude_sent.append(message) or "submitted")
+        patcher = patch("ihav_agent_room.runtime.send_claude", lambda project, native_id, message, mode: self.claude_sent.append(message) or "submitted")
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -361,7 +361,7 @@ class BroadcastDispatchTests(unittest.IsolatedAsyncioTestCase):
             if name != "CODEX_EXPERT":
                 self.store.member(name, {"status": "stopped"})
         with patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("AGENT_ROOM_MEMBER", None)
+            os.environ.pop("IHAV_AGENT_ROOM_MEMBER", None)
             for index in range(20):
                 self.store.broadcast_gateway_prompt(
                     f"Admin notice {index}",
@@ -445,7 +445,7 @@ class BroadcastDispatchTests(unittest.IsolatedAsyncioTestCase):
             barrier.wait()
             return "submitted"
 
-        with patch("agent_room.runtime.send_claude", wait_for_all_claude):
+        with patch("ihav_agent_room.runtime.send_claude", wait_for_all_claude):
             self.store.broadcast_gateway_prompt("One admin update", "parallel-admin-update",
                                                 receipt_id="P-parallel", provenance_state="human")
             await asyncio.wait_for(self.supervisor.dispatch(), timeout=7)

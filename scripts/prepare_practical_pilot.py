@@ -14,12 +14,12 @@ import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from agent_room import __version__
-from agent_room.common import PLUGIN_ROOT
-from agent_room.package import PATTERNS
+from ihav_agent_room import __version__
+from ihav_agent_room.common import PLUGIN_ROOT
+from ihav_agent_room.package import PATTERNS
 
 
-EDIT_SCOPE = ["agent_room/package_verifier.py", "agent_room/cli.py",
+EDIT_SCOPE = ["ihav_agent_room/package_verifier.py", "ihav_agent_room/cli.py",
               "tests/test_package_verifier.py", "resources/distribution-readme.md"]
 # Historical workload input; preparation does not require an unreleased current-version ZIP.
 REFERENCE_RELEASE = "0.3.1"
@@ -32,7 +32,7 @@ SCOPE = {"native_executed": False, "provider_authorization": "required before la
          "source_edit_scope": EDIT_SCOPE}
 WORK_ORDER = """# Integrate the package verifier
 
-Add `agent-room --json verify-package ARCHIVE` to this scratch plugin. Reuse and adapt
+Add `ihav-agent-room --json verify-package ARCHIVE` to this scratch plugin. Reuse and adapt
 `reference/verify_package.py` and its tests; preserve their validation contract. Use the
 existing CLI envelope: success contains version/files_checked; archive/I/O failure exits
 1 with error.code=package. Argument errors retain exit 2. It must work without a room,
@@ -44,14 +44,14 @@ source and can offer questions, counterexamples and suggestions directly. Use th
 existing task, claim, evidence and review mechanisms. Choose useful conversations and
 routine implementation details yourselves; no fixed discussion rounds or output template.
 
-Edit only agent_room/package_verifier.py, agent_room/cli.py,
+Edit only ihav_agent_room/package_verifier.py, ihav_agent_room/cli.py,
 tests/test_package_verifier.py, and resources/distribution-readme.md. Keep imports at
 module scope, standard library only. Keep versions/schema and other behavior unchanged.
 Run focused tests, including the reference error cases and roomless public CLI behavior.
 The release ZIP in fixtures/ is read-only. Reference files are read-only evidence.
 
-Use `agent-room` on PATH for coordination through the original plugin. Run the candidate
-explicitly with `python3 ./bin/agent-room ...` when testing it. Do not switch coordinator
+Use `ihav-agent-room` on PATH for coordination through the original plugin. Run the candidate
+explicitly with `python3 ./bin/ihav-agent-room ...` when testing it. Do not switch coordinator
 code, install globally, call other services, spawn additional agents, publish or read the
 observer/protocol outside this project. Tests may create and clean up their own temporary
 fixtures. Native room startup, mode changes and cleanup belong to the operator.
@@ -86,7 +86,7 @@ def selected_files(source):
               f"dist/agent-room-{REFERENCE_RELEASE}.zip", "docs/practical-learning-pilot.md",
               "scripts/prepare_practical_pilot.py")
     paths.update({name: source / name for name in extras})
-    required = {"bin/agent-room", "agent_room/cli.py", "agent_room/knowledge.py",
+    required = {"bin/ihav-agent-room", "ihav_agent_room/cli.py", "ihav_agent_room/knowledge.py",
                 "resources/distribution-readme.md", ".claude-plugin/plugin.json"}
     if required - paths.keys():
         raise ValueError("Missing required plugin inputs")

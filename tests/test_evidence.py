@@ -7,10 +7,10 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from agent_room.common import RoomError, dumps, process_stamp
-from agent_room.schema import EXTENSIONS, migrate
-from agent_room.scaffold import initialize
-from agent_room.store import MAX_REVIEW_PACKET_BYTES, Store
+from ihav_agent_room.common import RoomError, dumps, process_stamp
+from ihav_agent_room.schema import EXTENSIONS, migrate
+from ihav_agent_room.scaffold import initialize
+from ihav_agent_room.store import MAX_REVIEW_PACKET_BYTES, Store
 from receipts import human_receipt
 
 
@@ -159,7 +159,7 @@ class EvidenceTests(EvidenceFixture, unittest.TestCase):
         self.assertEqual(packet["status"], "truncated")
         self.assertTrue(packet["truncated"])
         self.assertEqual(packet["submission"]["source_digest"], submission["digest"])
-        self.assertIn(f"agent-room submission show {submission['id']}", packet["full_record_commands"])
+        self.assertIn(f"ihav-agent-room submission show {submission['id']}", packet["full_record_commands"])
 
         self.source.write_text("value = 2\n")
         stale = self.store.review_packet(task["id"], submission["id"])
@@ -210,7 +210,7 @@ class EvidenceTests(EvidenceFixture, unittest.TestCase):
         self.assertTrue(packet["truncated"])
         self.assertEqual(len(packet["submission"]["paths"]), 13)
         self.assertEqual(packet["submission"]["paths"][-1], "[1 more; read full record]")
-        self.assertIn(f"agent-room submission show {submission['id']}", packet["full_record_commands"])
+        self.assertIn(f"ihav-agent-room submission show {submission['id']}", packet["full_record_commands"])
         self.assertLessEqual(len(dumps(packet).encode("utf-8")), MAX_REVIEW_PACKET_BYTES)
 
     def test_review_queue_rejects_cross_task_submission_and_reused_id_with_new_submission(self):
@@ -419,7 +419,7 @@ class EvidenceTests(EvidenceFixture, unittest.TestCase):
         pack = self.store.task_context(task["id"])
         self.assertLess(len(dumps(pack)), 12200)
         self.assertIn("truncated", dumps(pack))
-        self.assertIn("agent-room task show " + task["id"], pack["full_record_commands"])
+        self.assertIn("ihav-agent-room task show " + task["id"], pack["full_record_commands"])
 
     def test_legacy_checkpoint_update_preserves_unknown_effects_and_is_visible(self):
         task = self.task()
@@ -488,7 +488,7 @@ class MigrationTests(EvidenceFixture, unittest.TestCase):
 
     def test_upgrade_failure_rolls_back_and_retains_backup(self):
         self.legacy()
-        with patch("agent_room.schema.EXTENSIONS", EXTENSIONS + "INVALID SQL;"):
+        with patch("ihav_agent_room.schema.EXTENSIONS", EXTENSIONS + "INVALID SQL;"):
             with self.assertRaises(sqlite3.Error):
                 migrate(self.store)
         db = self.store.connect()

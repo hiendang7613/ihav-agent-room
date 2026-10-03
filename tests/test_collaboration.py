@@ -7,11 +7,11 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from agent_room.common import RoomError
-from agent_room.native import message_text
-from agent_room.runtime import Supervisor
-from agent_room.scaffold import initialize
-from agent_room.store import MAX_REVIEW_PACKET_BYTES, Store
+from ihav_agent_room.common import RoomError
+from ihav_agent_room.native import message_text
+from ihav_agent_room.runtime import Supervisor
+from ihav_agent_room.scaffold import initialize
+from ihav_agent_room.store import MAX_REVIEW_PACKET_BYTES, Store
 from receipts import human_receipt
 
 
@@ -106,10 +106,10 @@ class CollaborationTests(unittest.IsolatedAsyncioTestCase):
         async def fake_stop_claude_worker(*args, **kwargs):
             return None
 
-        with patch("agent_room.runtime.CodexClient", NativeRecorder), \
-                patch("agent_room.runtime.start_claude", fake_start_claude), \
-                patch("agent_room.runtime.exact_claude", side_effect=RoomError("No fake session", "unavailable")), \
-                patch("agent_room.runtime.stop_claude_worker", fake_stop_claude_worker), \
+        with patch("ihav_agent_room.runtime.CodexClient", NativeRecorder), \
+                patch("ihav_agent_room.runtime.start_claude", fake_start_claude), \
+                patch("ihav_agent_room.runtime.exact_claude", side_effect=RoomError("No fake session", "unavailable")), \
+                patch("ihav_agent_room.runtime.stop_claude_worker", fake_stop_claude_worker), \
                 patch.object(supervisor, "owner_alive", return_value=True):
             await supervisor.launch()
         return supervisor
@@ -124,7 +124,7 @@ class CollaborationTests(unittest.IsolatedAsyncioTestCase):
             main_messages.append(message)
             return "submitted"
 
-        with patch("agent_room.runtime.send_claude", send_claude):
+        with patch("ihav_agent_room.runtime.send_claude", send_claude):
             await supervisor.dispatch()
             self.assertEqual(len(main_messages), 1)
             self.store.acknowledge("CLAUDE_01", main_messages[0]["id"], "Considered the question")
@@ -190,7 +190,7 @@ class CollaborationTests(unittest.IsolatedAsyncioTestCase):
         direct_reviewer = supervisor.codex["CODEX_EXPERT"] = NativeRecorder()
         copied_codex = supervisor.codex["CODEX_01"] = NativeRecorder()
         copied_claude = []
-        with patch("agent_room.runtime.send_claude", lambda *args: copied_claude.append(args[2]) or "submitted"):
+        with patch("ihav_agent_room.runtime.send_claude", lambda *args: copied_claude.append(args[2]) or "submitted"):
             await supervisor.dispatch()
 
         self.assertEqual(len(direct_reviewer.sent), 1)
@@ -231,7 +231,7 @@ class CollaborationTests(unittest.IsolatedAsyncioTestCase):
                 second = self.store.send("CLAUDE_01", "CODEX_EXPERT", "A useful follow-up")
                 supervisor = Supervisor(self.store, self.generation)
                 client = supervisor.codex["CODEX_EXPERT"] = RejectFirst()
-                with patch("agent_room.runtime.send_claude", return_value="submitted"):
+                with patch("ihav_agent_room.runtime.send_claude", return_value="submitted"):
                     await supervisor.dispatch()
                 self.assertEqual([m["id"] for m in client.sent], [first["id"], second["id"]])
                 self.assertFalse(client.sent[0]["pending_recovery"])
@@ -243,7 +243,7 @@ class CollaborationTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(next(m for m in self.messages() if m["id"] == first["id"])["status"], state)
                 self.store.acknowledge("CODEX_EXPERT", first["id"], "Inspected outcome; no effect replayed")
                 third = self.store.send("CLAUDE_01", "CODEX_EXPERT", "Another ordinary question")
-                with patch("agent_room.runtime.send_claude", return_value="submitted"):
+                with patch("ihav_agent_room.runtime.send_claude", return_value="submitted"):
                     await supervisor.dispatch()
                 self.assertEqual(client.sent[-1]["id"], third["id"])
                 self.assertFalse(client.sent[-1]["pending_recovery"])
@@ -257,7 +257,7 @@ class CollaborationTests(unittest.IsolatedAsyncioTestCase):
 
         supervisor = Supervisor(self.store, self.generation)
         supervisor.codex["CODEX_EXPERT"] = RejectAll()
-        with patch("agent_room.runtime.send_claude", side_effect=RoomError("Main unavailable")):
+        with patch("ihav_agent_room.runtime.send_claude", side_effect=RoomError("Main unavailable")):
             failed = self.store.send("CLAUDE_01", "CODEX_EXPERT", "First question")
             await supervisor.dispatch()
             notices = [m for m in self.messages() if m["recipient"] == "CLAUDE_01"]
@@ -296,7 +296,7 @@ class CollaborationTests(unittest.IsolatedAsyncioTestCase):
             delivered.append(message["id"])
             return "submitted"
 
-        with patch("agent_room.runtime.send_claude", send_claude):
+        with patch("ihav_agent_room.runtime.send_claude", send_claude):
             await supervisor.dispatch()
         self.assertEqual(delivered, [healthy["id"]])
         self.assertEqual(self.logical_message_counts(), {"queued": 40, "submitted": 1})

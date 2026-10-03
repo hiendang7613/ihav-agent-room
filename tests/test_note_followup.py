@@ -9,10 +9,10 @@ from contextlib import redirect_stdout
 import unittest
 from unittest.mock import patch
 
-from agent_room.cli import main
-from agent_room.common import RoomError, dumps
-from agent_room.knowledge import Knowledge
-from agent_room.store import Store
+from ihav_agent_room.cli import main
+from ihav_agent_room.common import RoomError, dumps
+from ihav_agent_room.knowledge import Knowledge
+from ihav_agent_room.store import Store
 from test_evidence import EvidenceFixture
 
 
@@ -190,13 +190,13 @@ class NoteFollowupTests(EvidenceFixture, unittest.TestCase):
             self.store.put_room(db, room)
         token = "fixture-only-binding"
         self.store.member("CODEX_EXPERT", {"token_hash": hashlib.sha256(token.encode()).hexdigest()})
-        env = {"AGENT_ROOM_MEMBER": "CODEX_EXPERT", "AGENT_ROOM_BINDING": token, "AGENT_ROOM_SESSION_ID": ""}
+        env = {"IHAV_AGENT_ROOM_MEMBER": "CODEX_EXPERT", "IHAV_AGENT_ROOM_BINDING": token, "IHAV_AGENT_ROOM_SESSION_ID": ""}
         with patch.dict(os.environ, env), redirect_stdout(io.StringIO()) as output:
             self.assertEqual(main(argv), 0, output.getvalue())
         self.assertEqual(json.loads(output.getvalue())["data"]["resolution"]["basis"], "peer")
         before = self.store.path.read_bytes()
         with patch.object(Store, "project_views", side_effect=AssertionError("History wrote a view")), \
-                patch.dict(os.environ, {"AGENT_ROOM_MEMBER": "", "AGENT_ROOM_BINDING": ""}), \
+                patch.dict(os.environ, {"IHAV_AGENT_ROOM_MEMBER": "", "IHAV_AGENT_ROOM_BINDING": ""}), \
                 redirect_stdout(io.StringIO()) as output:
             self.assertEqual(main(["--project", str(self.project), "--json", "note", "history", note["id"]]), 0)
         self.assertEqual([item["version"] for item in json.loads(output.getvalue())["data"]["items"]], [1, 2])

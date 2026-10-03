@@ -7,9 +7,9 @@ import sys
 import unittest
 from unittest.mock import patch
 
-from agent_room.cli import parser, run
-from agent_room.common import PLUGIN_ROOT, dumps
-from agent_room.evidence import source_matches
+from ihav_agent_room.cli import parser, run
+from ihav_agent_room.common import PLUGIN_ROOT, dumps
+from ihav_agent_room.evidence import source_matches
 from test_evidence import EvidenceFixture
 from receipts import human_receipt
 
@@ -25,14 +25,14 @@ class CompactStatusTests(EvidenceFixture, unittest.TestCase):
         self.review(self.submit(active))
         self.source.write_text("value = 2\n")
         before = self.store.path.read_bytes()
-        with patch("agent_room.store.source_matches", wraps=source_matches) as checked:
+        with patch("ihav_agent_room.store.source_matches", wraps=source_matches) as checked:
             compact = self.store.status(compact=True)
         self.assertEqual(checked.call_count, 1)
         self.assertEqual(compact["task_counts"], {"done": 1, "review": 1})
         self.assertEqual([t["id"] for t in compact["tasks"]], [active["id"]])
         self.assertEqual(compact["tasks"][0]["review_status"]["state"], "stale")
         # Historical inspection still rechecks the source; no cached verdict is reused.
-        with patch("agent_room.store.source_matches", wraps=source_matches) as checked:
+        with patch("ihav_agent_room.store.source_matches", wraps=source_matches) as checked:
             full = self.store.status()
         self.assertEqual(checked.call_count, 2)
         self.assertTrue(all(t["review_status"]["state"] == "stale" for t in full["tasks"]))
@@ -104,7 +104,7 @@ class CompactStatusTests(EvidenceFixture, unittest.TestCase):
                 "CODEX_01": {"count": 1, "statuses": {"unknown": 1}},
                 "CODEX_EXPERT": {"count": 1, "statuses": {"accepted": 1}},
             },
-            "read_command": "agent-room inbox --pending --after 0",
+            "read_command": "ihav-agent-room inbox --pending --after 0",
         }
         self.assertEqual(full["pending_inboxes"], expected)
         self.assertEqual(compact["pending_inboxes"], expected)
@@ -125,7 +125,7 @@ class CompactStatusTests(EvidenceFixture, unittest.TestCase):
         self.assertEqual(compact["incomplete_notifications_by_member"], expected_by_member)
         self.assertEqual(compact["incomplete_notifications"], full["incomplete_notifications"][:1])
         self.assertTrue(compact["incomplete_notifications_truncated"])
-        self.assertEqual(compact["detail"]["read_incomplete_notifications"], "agent-room status")
+        self.assertEqual(compact["detail"]["read_incomplete_notifications"], "ihav-agent-room status")
 
     def test_status_query_count_does_not_grow_for_each_unreviewed_task_or_note(self):
         def query_count(compact):
@@ -204,7 +204,7 @@ class CompactStatusTests(EvidenceFixture, unittest.TestCase):
         compact_members = [{key: value for key, value in member.items() if key not in model_fields}
                            for member in full["members"]]
         self.assertEqual(compact["members"], compact_members)
-        self.assertEqual(compact["detail"]["read_models"], "agent-room status")
+        self.assertEqual(compact["detail"]["read_models"], "ihav-agent-room status")
 
     def test_note_preview_and_stale_review_keep_current_identity_and_full_read_path(self):
         task = self.task()
@@ -227,14 +227,14 @@ class CompactStatusTests(EvidenceFixture, unittest.TestCase):
     def test_cli_compact_is_read_only_and_retains_unavailable_process_inspection(self):
         self.task()
         before = self.store.path.read_bytes()
-        with patch("agent_room.cli.start_room", side_effect=AssertionError("Started native work")), \
-                patch("agent_room.cli.process_alive", side_effect=PermissionError("inspection unavailable")):
+        with patch("ihav_agent_room.cli.start_room", side_effect=AssertionError("Started native work")), \
+                patch("ihav_agent_room.cli.process_alive", side_effect=PermissionError("inspection unavailable")):
             result = run(parser().parse_args(["--project", str(self.project), "status", "--compact"]))
         self.assertIsNone(result["supervisor_alive"])
         self.assertIn("unknown", result["process_inspection"])
         self.assertEqual(result["detail"]["mode"], "compact")
         self.assertEqual(before, self.store.path.read_bytes())
-        command = [sys.executable, str(PLUGIN_ROOT / "bin/agent-room"), "--project", str(self.project), "--json", "status"]
+        command = [sys.executable, str(PLUGIN_ROOT / "bin/ihav-agent-room"), "--project", str(self.project), "--json", "status"]
         env = dict(os.environ, PATH="")
         for flags, compact in (([], False), (["--compact"], True)):
             response = subprocess.run(command + flags, env=env, text=True, capture_output=True, timeout=5)

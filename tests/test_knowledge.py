@@ -7,11 +7,11 @@ import unittest
 from contextlib import redirect_stdout
 from unittest.mock import patch
 
-from agent_room.cli import main, parser, run
-from agent_room.common import RoomError, dumps
-from agent_room.knowledge import Knowledge
-from agent_room.schema import KNOWLEDGE_SCHEMA, migrate
-from agent_room.store import Store
+from ihav_agent_room.cli import main, parser, run
+from ihav_agent_room.common import RoomError, dumps
+from ihav_agent_room.knowledge import Knowledge
+from ihav_agent_room.schema import KNOWLEDGE_SCHEMA, migrate
+from ihav_agent_room.store import Store
 from test_evidence import EvidenceFixture
 
 
@@ -135,7 +135,7 @@ class KnowledgeTests(EvidenceFixture, unittest.TestCase):
                 self.assertIn(expected, excerpt)
                 self.assertTrue(excerpt.startswith("[excerpt] "))
                 self.assertIn("read full record", excerpt)
-                self.assertEqual(item["read_command"], f"agent-room knowledge show {record['id']}")
+                self.assertEqual(item["read_command"], f"ihav-agent-room knowledge show {record['id']}")
         empty = self.knowledge.search()["items"][0]
         self.assertEqual(empty["preview"], data["body"][:280] + " [truncated; read full record]")
         self.assertEqual(self.knowledge.show(record["id"]), record)
@@ -186,13 +186,13 @@ class KnowledgeTests(EvidenceFixture, unittest.TestCase):
         data = self.project / "lesson.json"
         data.write_text(json.dumps({"title": "Lesson", "body": "Finding", "evidence": ["local experiment"]}))
         argv = ["--project", str(self.project), "knowledge", "add", "--input", str(data)]
-        with patch.dict(os.environ, {"AGENT_ROOM_MEMBER": "", "AGENT_ROOM_SESSION_ID": ""}), self.assertRaises(RoomError):
+        with patch.dict(os.environ, {"IHAV_AGENT_ROOM_MEMBER": "", "IHAV_AGENT_ROOM_SESSION_ID": ""}), self.assertRaises(RoomError):
             run(parser().parse_args(argv))
         with self.store.tx() as db:
             room = self.store.get_room(db)
             room["owner"] = {"session": "test-main"}
             self.store.put_room(db, room)
-        with patch.dict(os.environ, {"AGENT_ROOM_MEMBER": "CLAUDE_01", "AGENT_ROOM_SESSION_ID": "test-main"}):
+        with patch.dict(os.environ, {"IHAV_AGENT_ROOM_MEMBER": "CLAUDE_01", "IHAV_AGENT_ROOM_SESSION_ID": "test-main"}):
             record = run(parser().parse_args(argv))
         output = io.StringIO()
         with redirect_stdout(output):
@@ -235,7 +235,7 @@ class KnowledgeMigrationTests(EvidenceFixture, unittest.TestCase):
 
     def test_schema_two_failed_upgrade_rolls_back_with_readable_backup(self):
         self.legacy()
-        with patch("agent_room.schema.KNOWLEDGE_SCHEMA", KNOWLEDGE_SCHEMA + "INVALID SQL;"), self.assertRaises(sqlite3.Error):
+        with patch("ihav_agent_room.schema.KNOWLEDGE_SCHEMA", KNOWLEDGE_SCHEMA + "INVALID SQL;"), self.assertRaises(sqlite3.Error):
             migrate(self.store)
         db = self.store.connect()
         try:

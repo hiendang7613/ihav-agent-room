@@ -10,7 +10,7 @@ for the protected uses). One transcript row backs at most one receipt.
 import json
 import os
 
-from agent_room.common import strip_peer_wrapper
+from ihav_agent_room.common import strip_peer_wrapper
 
 # Host transcript labels (origin.kind) for messages that a human did not type.
 NON_HUMAN_ORIGINS = frozenset({"peer", "task-notification", "coordinator", "channel", "observer", "slack-ping",

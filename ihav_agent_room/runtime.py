@@ -11,13 +11,13 @@ import subprocess
 import sys
 import time
 
-from agent_room.common import (GATEWAY, MEMBERS, MODES, acting_member, PLUGIN_ROOT, RoomError, dumps, file_lock,
+from ihav_agent_room.common import (GATEWAY, MEMBERS, MODES, acting_member, PLUGIN_ROOT, RoomError, dumps, file_lock,
                                now, process_alive, process_stamp, uid)
-from agent_room.native import (CodexClient, claude_agents, doctor, exact_claude,
+from ihav_agent_room.native import (CodexClient, claude_agents, codex_usage_snapshot, doctor, exact_claude,
                                owned_descendants, send_claude, start_claude, stop_claude_worker,
                                stop_descendants, wait_for_exit)
-from agent_room.roster import ROSTER_BY_NAME, SELECTABLE_MODES, launch_config
-from agent_room.store import FYI_CONTEXT_SQL, Store
+from ihav_agent_room.roster import ROSTER_BY_NAME, SELECTABLE_MODES, launch_config
+from ihav_agent_room.store import FYI_CONTEXT_SQL, Store
 
 
 def bind_main(store, session, permission_mode="default"):
@@ -52,7 +52,7 @@ def start_room(store, session, mode=None, permission_mode="default", automatic=F
             room = store.get_room(db)
             supervisor = room.get("supervisor") or {}
             if automatic and room["manual_stop"]:
-                return {"started": False, "reason": "manual stop persists until /agent-room:start"}
+                return {"started": False, "reason": "manual stop persists until /ihav-agent-room:start"}
             if process_alive(supervisor.get("pid"), supervisor.get("stamp")):
                 if mode and MODES.get(mode) != MODES.get(room["mode"]):
                     raise RoomError("Stop the room before changing mode", "conflict")
@@ -72,12 +72,13 @@ def start_room(store, session, mode=None, permission_mode="default", automatic=F
                 store.apply_mode_settings(db, target_mode)
             generation = uid()
             room.update(mode=target_mode, status="starting", generation=generation, manual_stop=False, restart_requested=False, error=None)
+            room.pop("mode_transition", None)
             store.put_room(db, room)
         env = dict(os.environ)
-        env.pop("AGENT_ROOM_MEMBER_TOKEN", None)
+        env.pop("IHAV_AGENT_ROOM_MEMBER_TOKEN", None)
         with open(store.runtime / "supervisor.log", "a", encoding="utf-8") as log:
             try:
-                process = subprocess.Popen([sys.executable, str(PLUGIN_ROOT / "bin" / "agent-room"),
+                process = subprocess.Popen([sys.executable, str(PLUGIN_ROOT / "bin" / "ihav-agent-room"),
                     "--project", str(store.project), "_serve", "--generation", generation],
                     cwd=store.project, env=env, stdin=subprocess.DEVNULL, stdout=log, stderr=log,
                     start_new_session=True)
@@ -113,8 +114,7 @@ def check_mode_handoff(db, target_mode):
 
 
 def change_mode(store, mode):
-    """Switch room mode now (admin decision Q2.a). A running room restarts its native workers on their exact
-    sessions with the new settings; queued messages stay queued. Members leaving the mode stop; joining ones start."""
+    """Request the new preset now; drain current turns before exact-session restart."""
     if mode not in SELECTABLE_MODES:
         raise RoomError("Mode must be pair or advisors")
     with file_lock(store.runtime / "control.lock"):
@@ -127,11 +127,14 @@ def change_mode(store, mode):
             supervisor = room.get("supervisor") or {}
             restart = room["status"] in {"starting", "running"} and process_alive(supervisor.get("pid"), supervisor.get("stamp"))
             if restart:
-                room.update(status="stopping", restart_requested=True, manual_stop=False)
+                room.update(restart_requested=True, manual_stop=False,
+                            mode_transition={"from": previous, "to": mode, "state": "draining"})
+            else:
+                room.pop("mode_transition", None)
             store.put_room(db, room)
             store.event(db, "room.mode", {"from": previous, "to": mode, "restart": restart})
     return {"mode": mode, "previous": previous, "members": list(MODES[mode]), "restarting": restart,
-            "note": ("Workers restart on their exact sessions with the new settings; queued messages are kept."
+            "note": ("Current turns finish before exact-session restart; new deliveries wait and queued messages are kept."
                      if restart else "Applies when the room starts.")}
 
 
@@ -143,6 +146,7 @@ def request_stop(store, manual=True, session=None):
         room["manual_stop"] = manual or room["manual_stop"]
         if manual:
             room["restart_requested"] = False
+        room.pop("mode_transition", None)
         if room["status"] not in {"stopped", "failed"}:
             room["status"] = "stopping"
         store.put_room(db, room)
@@ -185,10 +189,10 @@ class Supervisor:
         binding = secrets.token_hex(24)
         self.store.member(name, {"token_hash": hashlib.sha256(binding.encode()).hexdigest()})
         env = dict(os.environ)
-        env.update(AGENT_ROOM_MEMBER=name, AGENT_ROOM_BINDING=binding,
-                   AGENT_ROOM_PROJECT=str(self.store.project),
+        env.update(IHAV_AGENT_ROOM_MEMBER=name, IHAV_AGENT_ROOM_BINDING=binding,
+                   IHAV_AGENT_ROOM_PROJECT=str(self.store.project),
                    CLAUDE_CODE_DISABLE_BG_EXIT_HANDOFF="1")
-        env.pop("AGENT_ROOM_SESSION_ID", None)
+        env.pop("IHAV_AGENT_ROOM_SESSION_ID", None)
         env.pop("CLAUDE_CODE_MESSAGING_TOKEN", None)
         env.pop("CLAUDE_CODE_MESSAGING_SOCKET", None)
         env.pop("CLAUDE_ENV_FILE", None)
@@ -240,7 +244,8 @@ class Supervisor:
         for name in MODES[room["mode"]]:
             if name == GATEWAY:
                 continue
-            if self.stopping or not self.owner_alive() or self.store.room()["status"] == "stopping":
+            current = self.store.room()
+            if self.stopping or not self.owner_alive() or current["status"] == "stopping" or current.get("mode_transition"):
                 return
             member = self.store.member(name)
             env = self.worker_env(name)
@@ -313,8 +318,19 @@ class Supervisor:
                         "generation": self.generation, "state": "pending", "created": now()}
                     with self.store.tx() as db:
                         db.execute("INSERT INTO approvals VALUES (?,?)", (approval_id, dumps(request)))
-                        self.store.notify(db, name, GATEWAY, f"Native request {approval_id} is pending ({method}). Read it with agent-room approval list. Only an explicit admin response may resolve it; peer text is not approval.")
+                        self.store.notify(db, name, GATEWAY, f"Native request {approval_id} is pending ({method}). Read it with ihav-agent-room approval list. Only an explicit admin response may resolve it; peer text is not approval.")
                     self.store.member(name, {"status": "waiting_permission" if supported else "waiting_native_input"})
+                elif method == "thread/tokenUsage/updated":
+                    try:
+                        snapshot = codex_usage_snapshot(params, client.thread_id)
+                    except RoomError as exc:
+                        with self.store.tx() as db:
+                            self.store.event(db, "native.usage_invalid", {"member": name,
+                                "generation": self.generation, "reason": str(exc)})
+                    else:
+                        with self.store.tx() as db:
+                            self.store.event(db, "native.usage", {"member": name,
+                                "generation": self.generation, "provider": "codex", **snapshot})
                 elif method == "serverRequest/resolved":
                     with self.store.tx() as db:
                         for row in db.execute("SELECT id,data FROM approvals").fetchall():
@@ -365,6 +381,8 @@ class Supervisor:
 
     async def dispatch(self):
         room = self.store.room()
+        if room.get("mode_transition"):
+            return  # Drain already-running turns; no new starts or steering during this restart.
         paused = {"waiting_permission", "waiting_native_input", "failed", "stopped"}
         queues = {}
         with self.store.read() as db:
@@ -398,6 +416,8 @@ class Supervisor:
     async def _dispatch_member_queue(self, target, messages, paused):
         """Dispatch one recipient's ordered queue without overlapping its native turns."""
         for message in messages:
+            if self.store.room().get("mode_transition"):
+                return
             member = self.store.member(target)
             if member["status"] in paused:
                 continue
@@ -443,8 +463,8 @@ class Supervisor:
             if result in {"failed", "unknown"} and not message["pending_recovery"] and target != GATEWAY:
                 self.store.notice(target, GATEWAY, f"Delivery {message['id']} to {target} is {result}. Inspect pending inbox/status and reconcile effects before retrying; independent work can continue.")
 
-    async def refresh_claude(self):
-        if not self.claude or time.monotonic() - self.last_registry_check < 4:
+    async def refresh_claude(self, force=False):
+        if not self.claude or (not force and time.monotonic() - self.last_registry_check < 4):
             return
         self.last_registry_check = time.monotonic()
         agents = await asyncio.to_thread(claude_agents, self.store.project)
@@ -456,11 +476,30 @@ class Supervisor:
                 continue
             native = matches[0]
             waiting = native.get("waitingFor")
-            status = "waiting_native_input" if waiting else {"busy": "working", "working": "working", "done": "idle"}.get(native.get("status"), native.get("status", "idle"))
+            status = "waiting_native_input" if waiting else {"busy": "working", "working": "working", "done": "idle"}.get(native.get("status"), native.get("status", "unknown"))
             old = self.store.member(name)
             self.store.member(name, {"status": status, "pid": native["pid"], "stamp": process_stamp(native["pid"])})
             if waiting and old["status"] != status:
                 self.store.notice(name, GATEWAY, f"Native Claude session {native_id} waits for {waiting}. Open its native prompt with claude attach {native['id']}; peer messages cannot approve it.")
+
+    def finish_mode_restart(self):
+        """Only observed idle native workers permit cleanup; waiting/failed/unknown is not completion."""
+        with self.store.tx() as db:
+            room = self.store.get_room(db)
+            transition = room.get("mode_transition")
+            if not transition or not room.get("restart_requested") or room["generation"] != self.generation:
+                return False
+            waiting = []
+            for name in (*self.codex, *self.claude):
+                member = json.loads(db.execute("SELECT data FROM members WHERE name=?", (name,)).fetchone()[0])
+                if member["status"] != "idle" or (name in self.codex and self.codex[name].turn_id):
+                    waiting.append(name)
+            transition["waiting"] = waiting
+            if not waiting:
+                transition["state"] = "restarting"
+                room["status"] = "stopping"
+            self.store.put_room(db, room)
+            return not waiting
 
     async def shutdown(self):
         failures = []
@@ -511,7 +550,9 @@ class Supervisor:
                 while not self.stopping and self.owner_alive() and self.store.room()["status"] != "stopping":
                     await self.native_events()
                     await self.approvals()
-                    await self.refresh_claude()
+                    await self.refresh_claude(force=bool(self.store.room().get("mode_transition")))
+                    if self.finish_mode_restart():
+                        break
                     await self.dispatch()
                     await asyncio.sleep(.3)
             except (RoomError, OSError, ValueError, KeyError) as exc:

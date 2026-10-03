@@ -4,7 +4,7 @@ description: Summarize members, advisory attention, open work and pending reques
 disable-model-invocation: true
 ---
 
-Read `agent-room --json status --compact`. Reject arguments. Give a concise Vietnamese summary of
+Read `ihav-agent-room --json status --compact`. Reject arguments. Give a concise Vietnamese summary of
 current mode, actual supervisor liveness, member errors, unfinished tasks/next steps,
 questions and approvals requiring an actual admin decision. Main interprets technical state internally;
 present outcomes, progress, blockers and next steps in ordinary language. Keep IDs, counters, transport
@@ -17,7 +17,7 @@ repair configuration or make provider calls as part of status.
 Use task.review_status, latest_attempt, missing_evidence, last_progress and unprocessed_messages
 to identify stale reviews and incomplete work. A completed native attempt or processed ACK
 does not mean acceptance passed. Missing native output/turn IDs remain unknown. When recovery
-matters, read `agent-room task context TASK_ID` and report its checkpoint_reconcile reasons.
+matters, read `ihav-agent-room task context TASK_ID` and report its checkpoint_reconcile reasons.
 
 Use `attention.by_member` to summarize current work each member may want to inspect.
 Present it as optional attention, with any stated blockers and links to current records.

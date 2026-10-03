@@ -7,8 +7,8 @@ actually discuss. Measuring real discussion quality belongs to the blinded B1/B2
 import itertools
 import unittest
 
-from agent_room.common import MODES
-from agent_room.native import COLLABORATION_GUIDANCE, message_text, role_instructions
+from ihav_agent_room.common import MODES
+from ihav_agent_room.native import COLLABORATION_GUIDANCE, message_text, role_instructions
 from test_evidence import EvidenceFixture
 
 FREE_CLAUSES = ("Discussion needs no task or format", "Roles do not limit contributions", "no debate/self-improvement quota")
@@ -28,9 +28,9 @@ class PeerFreedomGateTests(EvidenceFixture, unittest.TestCase):
         text = message_text(row)
         self.assertNotIn("Task:", text, "Task-free discussion uses the shared role guidance")
         self.assertIn("A tentative thought, not a finding.", text)
-        self.assertIn("agent-room send --to CODEX_EXPERT", text)
+        self.assertIn("ihav-agent-room send --to CODEX_EXPERT", text)
         self.assertIn("final isn't forwarded", text)  # Why a reply goes through send.
-        self.assertIn("agent-room ack", COLLABORATION_GUIDANCE)  # A processing record, never a required reply message.
+        self.assertIn("ihav-agent-room ack", COLLABORATION_GUIDANCE)  # A processing record, never a required reply message.
         for forbidden in ("required format", "template", "must reply", "round limit", "fixed rounds"):
             self.assertNotIn(forbidden, text.casefold())
 

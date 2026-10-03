@@ -4,7 +4,7 @@ import json
 import os
 import sqlite3
 
-from agent_room.common import GATEWAY, RoomError, dumps, file_lock, now, process_alive, uid
+from ihav_agent_room.common import GATEWAY, RoomError, dumps, file_lock, now, process_alive, uid
 
 
 VERSION = 3

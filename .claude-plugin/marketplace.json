@@ -1,15 +1,15 @@
 {
-  "name": "agent-room-marketplace",
+  "name": "ihav-agent-room-marketplace",
   "description": "Native Claude Code and Codex agent rooms with shared durable coordination.",
   "owner": {
     "name": "Vulcan Labs"
   },
   "plugins": [
     {
-      "name": "agent-room",
+      "name": "ihav-agent-room",
       "source": "./",
       "description": "Native Claude Code + Codex rooms",
-      "version": "0.3.25"
+      "version": "0.4.0"
     },
     {
       "name": "i-have-asd-ste100",

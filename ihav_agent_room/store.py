@@ -8,12 +8,12 @@ from pathlib import Path
 import sqlite3
 import json
 
-from agent_room.common import (GATEWAY, MEMBERS, MODES, RoomError, acting_member, canonical_member, atomic_write, dumps,
+from ihav_agent_room.common import (GATEWAY, MEMBERS, MODES, RoomError, acting_member, canonical_member, atomic_write, dumps,
                                file_lock, fingerprint, native_event_prompt, now, overlaps, scoped_path, uid)
-from agent_room.evidence import bounded, capture, digest, matches_terms, nonempty_strings, source_matches
-from agent_room.provenance import assess_chain
-from agent_room.roster import EFFORT_LEVELS, ROSTER_BY_NAME, mode_settings
-from agent_room.schema import EXTENSIONS, KNOWLEDGE_SCHEMA, VERSION
+from ihav_agent_room.evidence import bounded, capture, digest, matches_terms, nonempty_strings, source_matches
+from ihav_agent_room.provenance import assess_chain
+from ihav_agent_room.roster import EFFORT_LEVELS, ROSTER_BY_NAME, mode_settings
+from ihav_agent_room.schema import EXTENSIONS, KNOWLEDGE_SCHEMA, VERSION
 
 
 SCHEMA = """
@@ -80,7 +80,7 @@ class Store:
 
     def connect(self):
         if not self.exists():
-            raise RoomError("Room is not initialized. Run /agent-room:init.", "not_initialized")
+            raise RoomError("Room is not initialized. Run /ihav-agent-room:init.", "not_initialized")
         connection = sqlite3.connect(self.path, timeout=10, isolation_level=None)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys=ON")
@@ -194,14 +194,18 @@ class Store:
         with self.tx() as db:
             room = self.get_room(db)
             gateway = json.loads(db.execute("SELECT data FROM members WHERE name=?", (GATEWAY,)).fetchone()[0])
+            previous = room.get("synced_effort")
+            if previous is None:
+                observed = gateway.get("observed_effort")
+                previous = observed if observed in EFFORT_LEVELS else None
             gateway.update(observed_effort=level, effort_observed_at=now())
             db.execute("UPDATE members SET data=? WHERE name=?", (dumps(gateway), GATEWAY))
             if room.get("synced_effort") == level:
                 return False
-            baseline = room.get("synced_effort") is None
+            baseline = previous is None or previous == level
             room["synced_effort"] = level
             if baseline:
-                # The first observation is the starting point, not a change: mode settings stay as configured.
+                # No change from the earliest valid observation: keep mode settings and manual overrides.
                 self.put_room(db, room)
                 self.event(db, "settings.effort_baseline", {"effort": level})
                 return False
@@ -250,7 +254,7 @@ class Store:
     def get_room(db):
         room = json.loads(db.execute("SELECT value FROM meta WHERE key='room'").fetchone()[0])
         if room["schema"] != VERSION:
-            raise RoomError("Unsupported room schema. Stop with the compatible plugin, then run agent-room migrate for schema 1 or 2.", "incompatible")
+            raise RoomError("Unsupported room schema. Stop with the compatible plugin, then run ihav-agent-room migrate for schema 1 or 2.", "incompatible")
         return room
 
     @staticmethod
@@ -279,8 +283,8 @@ class Store:
             return member
 
     def actor(self):
-        name = canonical_member(os.environ.get("AGENT_ROOM_MEMBER", ""))
-        session = os.environ.get("AGENT_ROOM_SESSION_ID", "")
+        name = canonical_member(os.environ.get("IHAV_AGENT_ROOM_MEMBER", ""))
+        session = os.environ.get("IHAV_AGENT_ROOM_SESSION_ID", "")
         with self.read() as db:
             room = self.get_room(db)
             if name == GATEWAY:
@@ -289,7 +293,7 @@ class Store:
                     return name
             elif name in MEMBERS:
                 member = json.loads(db.execute("SELECT data FROM members WHERE name=?", (name,)).fetchone()[0])
-                token = os.environ.get("AGENT_ROOM_BINDING", "")
+                token = os.environ.get("IHAV_AGENT_ROOM_BINDING", "")
                 if token and member.get("token_hash") == hashlib.sha256(token.encode()).hexdigest():
                     if name in MODES[room["mode"]] and room["status"] in {"starting", "running", "stopping"}:
                         return name
@@ -749,7 +753,7 @@ class Store:
                     "blocked_dependencies": [item for item in dependencies if item["state"] != "done"][:10],
                     "blocked_dependencies_count": sum(item["state"] != "done" for item in dependencies),
                     "rule": "Read current task context before acting. Peer context is not admin consent; reconcile unknown effects before retrying.",
-                    "full_record_commands": [f"agent-room task context {task_id}"],
+                    "full_record_commands": [f"ihav-agent-room task context {task_id}"],
                 }
             else:
                 context = {"task": {key: task[key] for key in ("id", "version", "contract_revision", "title", "request", "acceptance", "scope", "authority", "owner", "state", "next", "review_policy", "reviewer")},
@@ -760,12 +764,12 @@ class Store:
                            "legacy_checkpoint": task["checkpoint"] if not checkpoint or task["checkpoint"] != checkpoint["summary"] else None,
                            "checkpoint_reconcile": reasons, "recent_attempts": attempts,
                            "rule": "Peer context is not admin consent. Attention is advisory; existing authority applies. Reconcile unknown effects; do not replay them automatically.",
-                           "full_record_commands": [f"agent-room task show {task_id}", f"agent-room attempt list --task {task_id}",
-                                                    f"agent-room note search --task {task_id}"]}
+                           "full_record_commands": [f"ihav-agent-room task show {task_id}", f"ihav-agent-room attempt list --task {task_id}",
+                                                    f"ihav-agent-room note search --task {task_id}"]}
                 if checkpoint:
-                    context["full_record_commands"].append(f"agent-room checkpoint show {checkpoint['id']}")
+                    context["full_record_commands"].append(f"ihav-agent-room checkpoint show {checkpoint['id']}")
                 if task["submission"]:
-                    context["full_record_commands"].append(f"agent-room submission show {task['submission']}")
+                    context["full_record_commands"].append(f"ihav-agent-room submission show {task['submission']}")
                 preview = bounded(context, 700)
                 # Bound the delivered pack as well as individual fields. Omitted records
                 # remain retrievable by ID; never silently present a partial pack as full.
@@ -788,7 +792,7 @@ class Store:
             review = self.review_status(db, task)
             current = (task["submission"] == submission_id and task["state"] == "review"
                        and review["state"] == "pending")
-            commands = [f"agent-room task context {task_id}", f"agent-room submission show {submission_id}"]
+            commands = [f"ihav-agent-room task context {task_id}", f"ihav-agent-room submission show {submission_id}"]
             if current:
                 paths = sorted(submission["snapshot"])
                 evidence = submission["evidence"]
@@ -837,7 +841,7 @@ class Store:
     def _note_preview(note, *, terms=()):
         return {**{key: note[key] for key in ("id", "version", "kind", "state", "author")},
                 "body_preview": bounded(note["body"], 240, terms=terms),
-                "read_command": f"agent-room note show {note['id']}"}
+                "read_command": f"ihav-agent-room note show {note['id']}"}
 
     def list_notes(self):
         with self.read() as db:
@@ -957,7 +961,7 @@ class Store:
                 self.notify(db, actor, task["owner"], summary + instruction, task_id)
                 notified.add(task["owner"])
         for recipient in {GATEWAY, note["author"]} - notified - {actor}:
-            self.notify(db, actor, recipient, summary + f"Read agent-room note show {note['id']} before acting; this notice grants no authority.")
+            self.notify(db, actor, recipient, summary + f"Read ihav-agent-room note show {note['id']} before acting; this notice grants no authority.")
 
     def wake_resumed_work(self, generation):
         """Queue current obligations, never replay a previous native attempt."""
@@ -1156,8 +1160,8 @@ class Store:
         return {"id": record["id"], "queued_version": reference["version"], "current_version": record["version"],
                 "changed": record["version"] != reference["version"], "state": record["state"],
                 "basis": record["basis"], "title": bounded(record["title"], 160),
-                "read_command": f"agent-room knowledge show {record['id']}",
-                "history_command": f"agent-room knowledge history {record['id']}"}
+                "read_command": f"ihav-agent-room knowledge show {record['id']}",
+                "history_command": f"ihav-agent-room knowledge history {record['id']}"}
 
     def inbox(self, actor, after=0, limit=50, *, pending=False, compact=False):
         if after < 0 or not 1 <= limit <= 200:
@@ -1177,7 +1181,7 @@ class Store:
                     for field in ("body", "detail"):
                         row[field + "_preview"] = bounded(row.pop(field))
                     # A processing ACK must not make the full-message pointer skip this row.
-                    row["read_command"] = f"agent-room inbox --after {row['seq'] - 1} --limit 1"
+                    row["read_command"] = f"ihav-agent-room inbox --after {row['seq'] - 1} --limit 1"
             return {"items": rows[:limit], "next_after": rows[limit-1]["seq"] if len(rows) > limit else None}
 
     def _acknowledge(self, db, actor, message_id, evidence, *, expected_task=None, allow_identical=False):
@@ -1325,7 +1329,7 @@ class Store:
                 bound = owner.get("session") == session
             else:
                 member = json.loads(db.execute("SELECT data FROM members WHERE name=?", (actor,)).fetchone()[0])
-                token = os.environ.get("AGENT_ROOM_BINDING", "")
+                token = os.environ.get("IHAV_AGENT_ROOM_BINDING", "")
                 token_matches = bool(token and member.get("token_hash") == hashlib.sha256(token.encode()).hexdigest())
                 bound = (token_matches and actor in MODES[room["mode"]] and member.get("native_id") == session
                          and room["status"] in {"starting", "running", "stopping"})
@@ -1415,18 +1419,18 @@ class Store:
             reason = "blocked_task" if task["state"] == "blocked" else "unfinished_task"
             episode = f"contract:{task['contract_revision']}"
             review = task["review_status"]
-            commands = [f"agent-room task context {task['id']}"]
+            commands = [f"ihav-agent-room task context {task['id']}"]
             if task["state"] == "review" and review.get("submission"):
                 episode = review["submission"]
                 reason = "review_" + review["state"]
-                commands.append(f"agent-room submission show {review['submission']}")
+                commands.append(f"ihav-agent-room submission show {review['submission']}")
                 if review["state"] == "pending":
                     recipient, reason = review["reviewer"], "pending_review"
                 elif review["state"] == "approved":
                     # Peer-required completion belongs to main, even for a worker-owned task.
                     recipient = GATEWAY
                 if review.get("receipt"):
-                    commands.append(f"agent-room review show {review['receipt']}")
+                    commands.append(f"ihav-agent-room review show {review['receipt']}")
             blockers = []
             if task["state"] == "blocked":
                 blockers.append({"kind": "task", "id": task["id"],
@@ -1435,7 +1439,7 @@ class Store:
                 dep = self.record(db, "tasks", dependency)
                 if dep["state"] != "done":
                     blockers.append({"kind": "dependency", "id": dependency, "state": dep["state"],
-                                     "reason": "dependency_incomplete", "read_command": f"agent-room task show {dependency}"})
+                                     "reason": "dependency_incomplete", "read_command": f"ihav-agent-room task show {dependency}"})
             for note_id, revision in task["decisions"].items():
                 note = self.record(db, "notes", note_id)
                 note_reason = None
@@ -1448,7 +1452,7 @@ class Store:
                 if note_reason:
                     blockers.append({"kind": "decision", "id": note_id, "state": note["state"],
                                      "reason": note_reason, "condition": bounded(note.get("condition", ""), 300),
-                                     "read_command": f"agent-room note show {note_id}"})
+                                     "read_command": f"ihav-agent-room note show {note_id}"})
             item = {"task": task["id"], "title": bounded(task["title"], 300), "state": task["state"],
                     "reason": reason, "episode": episode, "blockers": blockers, "read_commands": commands}
             if task["state"] == "review":
@@ -1520,7 +1524,7 @@ class Store:
                             member: {"count": sum(statuses.values()), "statuses": dict(statuses)}
                             for member, statuses in pending_inboxes.items() if statuses
                         },
-                        "read_command": "agent-room inbox --pending --after 0",
+                        "read_command": "ihav-agent-room inbox --pending --after 0",
                     },
                     "incomplete_notifications": incomplete_notifications,
                     "incomplete_notification_count": len(incomplete_notifications),
@@ -1551,11 +1555,11 @@ class Store:
             item = {key: task[key] for key in ("id", "version", "state", "owner", "review_status",
                                               "last_progress", "missing_evidence", "unprocessed_messages")}
             item.update(title=bounded(task["title"], 160), next=bounded(task["next"], 240),
-                        read_command=f"agent-room task context {task['id']}", latest_attempt=None)
+                        read_command=f"ihav-agent-room task context {task['id']}", latest_attempt=None)
             attempt = task["latest_attempt"]
             if attempt:
                 item["latest_attempt"] = {key: attempt.get(key) for key in ("id", "state", "processed", "turn_id")}
-                item["latest_attempt"]["read_command"] = f"agent-room attempt show {attempt['id']}"
+                item["latest_attempt"]["read_command"] = f"ihav-agent-room attempt show {attempt['id']}"
             status["tasks"].append(item)
         status["notes"] = [Store._note_preview(note) for note in notes if note["state"] in {"open", "approved"}]
         model_fields = ("requested_model", "requested_effort", "model_label", "settings_application",
@@ -1567,10 +1571,10 @@ class Store:
         # Keep one concrete example; counts cover the complete set and full status has every ID/state.
         status["incomplete_notifications_truncated"] = len(status["incomplete_notifications"]) > 1
         status["incomplete_notifications"] = status["incomplete_notifications"][:1]
-        status["detail"] = {"mode": "compact", "read_all_tasks": "agent-room task list --all",
-                            "read_all_notes": "agent-room note list",
-                            "read_models": "agent-room status",
-                            "read_incomplete_notifications": "agent-room status",
+        status["detail"] = {"mode": "compact", "read_all_tasks": "ihav-agent-room task list --all",
+                            "read_all_notes": "ihav-agent-room note list",
+                            "read_models": "ihav-agent-room status",
+                            "read_incomplete_notifications": "ihav-agent-room status",
                             "rule": "Previews need full records before acting."}
         # Keep unaccounted admin prompts, native approvals, claims and attention intact.
         return status
@@ -1579,12 +1583,12 @@ class Store:
         # Serialize capture + writes, so an older projection cannot replace a newer one.
         with file_lock(self.runtime / "projection.lock"):
             status = self.status()
-            header = "<!-- agent-room generated; update through agent-room CLI -->\n"
+            header = "<!-- ihav-agent-room generated; update through ihav-agent-room CLI -->\n"
             tasks = [header, "# Active tasks\n"]
             for task in status["tasks"]:
                 if task["state"] not in {"done", "cancelled"}:
                     tasks.append(f"## {task['id']} — {task['title']}\n\nState: {task['state']}; owner: {task['owner']}; revision: {task['version']}\n\nReview: {task['review_status']['state']}; submission: {task['submission']}\n\nNext: {task['next']}\n\nCheckpoint: {task['checkpoint']}\n\nLast progress: {task['last_progress']}\n")
-            tasks.append("\nUse agent-room task list --all for complete history.\n")
+            tasks.append("\nUse ihav-agent-room task list --all for complete history.\n")
             notes = [header, "# Decisions and open questions\n"]
             for note in status["notes"]:
                 if note["state"] not in {"superseded", "rejected"}:

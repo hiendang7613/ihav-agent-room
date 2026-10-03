@@ -13,11 +13,11 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from agent_room.cli import parser, run
-from agent_room.common import RoomError, dumps
-from agent_room.runtime import Supervisor
-from agent_room.scaffold import initialize
-from agent_room.store import Store
+from ihav_agent_room.cli import parser, run
+from ihav_agent_room.common import RoomError, dumps
+from ihav_agent_room.runtime import Supervisor
+from ihav_agent_room.scaffold import initialize
+from ihav_agent_room.store import Store
 from receipts import human_receipt
 
 
@@ -152,7 +152,7 @@ class FaultMatrixTests(unittest.IsolatedAsyncioTestCase):
             "--source", retry_prompt,
             "--reconciled", "Checked native history and found no matching effect",
         ])
-        with patch.dict(os.environ, {"AGENT_ROOM_MEMBER": "CLAUDE_01", "AGENT_ROOM_SESSION_ID": "main"}):
+        with patch.dict(os.environ, {"IHAV_AGENT_ROOM_MEMBER": "CLAUDE_01", "IHAV_AGENT_ROOM_SESSION_ID": "main"}):
             result = run(args)
 
         self.assertEqual(result, {"queued": message["id"], "processed": False})

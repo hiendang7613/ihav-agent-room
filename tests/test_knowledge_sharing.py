@@ -8,9 +8,9 @@ import sys
 import unittest
 from unittest.mock import patch
 
-from agent_room.common import PLUGIN_ROOT, RoomError
-from agent_room.knowledge import Knowledge
-from agent_room.native import message_text
+from ihav_agent_room.common import PLUGIN_ROOT, RoomError
+from ihav_agent_room.knowledge import Knowledge
+from ihav_agent_room.native import message_text
 from test_evidence import EvidenceFixture
 
 
@@ -38,8 +38,8 @@ class KnowledgeSharingTests(EvidenceFixture, unittest.TestCase):
         received = self.inbox(message)
         reference = received["knowledge_reference"]
         self.assertEqual((reference["queued_version"], reference["current_version"], reference["changed"]), (1, 1, False))
-        self.assertEqual(reference["read_command"], "agent-room knowledge show " + self.lesson["id"])
-        self.assertEqual(reference["history_command"], "agent-room knowledge history " + self.lesson["id"])
+        self.assertEqual(reference["read_command"], "ihav-agent-room knowledge show " + self.lesson["id"])
+        self.assertEqual(reference["history_command"], "ihav-agent-room knowledge history " + self.lesson["id"])
         self.assertNotIn("body", reference)
         self.assertNotIn("Full evidence context", message_text(received))
         self.assertIn("advisory", message_text(received))
@@ -165,10 +165,10 @@ class KnowledgeSharingTests(EvidenceFixture, unittest.TestCase):
             room = self.store.get_room(db)
             room["owner"] = {"session": "sharing-main"}
             self.store.put_room(db, room)
-        env = dict(os.environ, AGENT_ROOM_MEMBER="CLAUDE_01", AGENT_ROOM_SESSION_ID="sharing-main", PATH="")
-        command = [sys.executable, str(PLUGIN_ROOT / "bin/agent-room"), "--project", str(self.project), "--json",
+        env = dict(os.environ, IHAV_AGENT_ROOM_MEMBER="CLAUDE_01", IHAV_AGENT_ROOM_SESSION_ID="sharing-main", PATH="")
+        command = [sys.executable, str(PLUGIN_ROOT / "bin/ihav-agent-room"), "--project", str(self.project), "--json",
                    "send", "--to", "CODEX_EXPERT", "--knowledge", self.lesson["id"], "--body", "Please challenge this lesson."]
-        failed = subprocess.run(command, env=env | {"AGENT_ROOM_SESSION_ID": "unbound"}, text=True, capture_output=True, timeout=5)
+        failed = subprocess.run(command, env=env | {"IHAV_AGENT_ROOM_SESSION_ID": "unbound"}, text=True, capture_output=True, timeout=5)
         self.assertEqual(failed.returncode, 1)
         self.assertEqual(json.loads(failed.stdout)["error"]["code"], "identity")
         result = subprocess.run(command, env=env, text=True, capture_output=True, timeout=5)

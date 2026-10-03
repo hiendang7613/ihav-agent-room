@@ -7,9 +7,9 @@ import re
 import unittest
 from unittest.mock import patch
 
-from agent_room.cli import parser, run
-from agent_room.common import GATEWAY, MEMBERS, MODES, RoomError, acting_member, canonical_member
-from agent_room.roster import ALIASES, DEFAULT_MEMBERS, LAUNCHED_CLAUDE, ROSTER, launch_config
+from ihav_agent_room.cli import parser, run
+from ihav_agent_room.common import GATEWAY, MEMBERS, MODES, RoomError, acting_member, canonical_member
+from ihav_agent_room.roster import ALIASES, DEFAULT_MEMBERS, LAUNCHED_CLAUDE, ROSTER, launch_config
 from test_evidence import EvidenceFixture
 
 os.environ.pop("CLAUDE_EFFORT", None)  # Hermetic: the host session effort must not leak into room state.
@@ -69,10 +69,10 @@ class RosterTests(EvidenceFixture, unittest.TestCase):
         self.assertEqual(canonical_member("CLAUDE_01"), "CLAUDE_01")
         self.assertEqual(canonical_member("nobody"), "nobody")
         for given, expected in (("CLAUDE_WORKER", "CLAUDE_01"), ("CODEX_WORKER", "CODEX_01"), ("CODEX_EXPERT", "CODEX_EXPERT")):
-            with self.subTest(env=given), patch.dict(os.environ, AGENT_ROOM_MEMBER=given):
+            with self.subTest(env=given), patch.dict(os.environ, IHAV_AGENT_ROOM_MEMBER=given):
                 self.assertEqual(acting_member(), expected)  # A non-gateway member cannot be mistaken for the default.
         with patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("AGENT_ROOM_MEMBER", None)
+            os.environ.pop("IHAV_AGENT_ROOM_MEMBER", None)
             self.assertEqual(acting_member(), GATEWAY)
 
     def test_an_alias_acts_as_the_gateway_and_unknown_names_are_still_refused(self):
@@ -80,10 +80,10 @@ class RosterTests(EvidenceFixture, unittest.TestCase):
             room = self.store.get_room(db)
             room["owner"] = {"session": "main"}
             self.store.put_room(db, room)
-        with patch.dict(os.environ, AGENT_ROOM_MEMBER="CLAUDE_WORKER", AGENT_ROOM_SESSION_ID="main"):
+        with patch.dict(os.environ, IHAV_AGENT_ROOM_MEMBER="CLAUDE_WORKER", IHAV_AGENT_ROOM_SESSION_ID="main"):
             self.assertEqual(self.store.actor(), "CLAUDE_01")
             self.assertEqual(run(parser().parse_args(["--project", str(self.project), "task", "list"])), [])
-        with patch.dict(os.environ, AGENT_ROOM_MEMBER="NOBODY", AGENT_ROOM_SESSION_ID="main"):
+        with patch.dict(os.environ, IHAV_AGENT_ROOM_MEMBER="NOBODY", IHAV_AGENT_ROOM_SESSION_ID="main"):
             with self.assertRaises(RoomError) as caught:
                 self.store.actor()
             self.assertEqual(caught.exception.code, "identity")
@@ -107,7 +107,7 @@ class RosterTests(EvidenceFixture, unittest.TestCase):
         """Ratchet against hardcoding: code uses GATEWAY, MEMBERS and the roster, never a quoted member id."""
         pattern = re.compile(r"""["'](CLAUDE_01|CODEX_01|CLAUDE_EXPERT|CODEX_EXPERT)["']""")
         offenders = []
-        for path in sorted((Path(__file__).resolve().parents[1] / "agent_room").glob("*.py")):
+        for path in sorted((Path(__file__).resolve().parents[1] / "ihav_agent_room").glob("*.py")):
             if path.name == "roster.py":
                 continue
             for number, line in enumerate(path.read_text().splitlines(), 1):

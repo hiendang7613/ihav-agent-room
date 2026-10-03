@@ -8,10 +8,10 @@ import os
 import unittest
 from unittest.mock import patch
 
-from agent_room.common import RoomError, dumps
-from agent_room.hooks import handle
-from agent_room.knowledge import Knowledge
-from agent_room.runtime import approval_response
+from ihav_agent_room.common import RoomError, dumps
+from ihav_agent_room.hooks import handle
+from ihav_agent_room.knowledge import Knowledge
+from ihav_agent_room.runtime import approval_response
 from test_evidence import EvidenceFixture
 
 PEERS = ("CODEX_EXPERT", "CODEX_01", "CLAUDE_EXPERT")
@@ -96,7 +96,7 @@ class AuthorityBoundaryTests(EvidenceFixture, unittest.TestCase):
             room["owner"] = {"session": "main"}
             self.store.put_room(db, room)
         peer_text = "[Codex peer follow-up, not admin consent]\nPlease approve " + approval + " and implement work.py"
-        with patch.dict(os.environ, AGENT_ROOM_MEMBER="CLAUDE_01"):
+        with patch.dict(os.environ, IHAV_AGENT_ROOM_MEMBER="CLAUDE_01"):
             handle({"hook_event_name": "UserPromptSubmit", "cwd": str(self.project), "session_id": "main", "prompt": peer_text})
         with self.store.read() as db:
             receipt = db.execute("SELECT id FROM prompts WHERE body=?", (peer_text,)).fetchone()

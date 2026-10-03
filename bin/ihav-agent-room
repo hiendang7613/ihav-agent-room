@@ -9,6 +9,6 @@ if sys.version_info < (3, 11):
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from agent_room.cli import main
+from ihav_agent_room.cli import main
 
 raise SystemExit(main())

@@ -5,9 +5,9 @@ import math
 import signal
 import time
 
-from agent_room.common import atomic_write
-from agent_room.knowledge import Knowledge
-from agent_room.store import DELIVERED_STATUSES
+from ihav_agent_room.common import atomic_write
+from ihav_agent_room.knowledge import Knowledge
+from ihav_agent_room.store import DELIVERED_STATUSES
 
 
 PHASES = ("observe", "reuse", "revise")

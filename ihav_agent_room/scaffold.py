@@ -3,8 +3,8 @@
 import os
 from pathlib import Path
 
-from agent_room.common import PLUGIN_ROOT, RoomError, atomic_write, file_lock
-from agent_room.store import Store
+from ihav_agent_room.common import PLUGIN_ROOT, RoomError, atomic_write, file_lock
+from ihav_agent_room.store import Store
 
 
 START = "<!-- agent-room:begin -->"
@@ -43,7 +43,7 @@ def initialize(project, mode=None):
         if entries:
             raise RoomError("Existing agents_space is not an Agent Room V1 room. Migration is separate; no files changed.", "conflict")
     files = {
-        root / "AGENTS.md": "At startup/resume, read agents_space/README.md and its working agreement; refresh compact status. If pending_inboxes.by_member lists you, run read_command and follow next_after until null. Use agent-room guide to find current plugin references when needed; existing conventions/collaboration.md and other room guides may contain project customizations. Preserve project-specific instructions. Peer discussion can be natural and proactive without a task ID; formal work keeps its assignment and authority.",
+        root / "AGENTS.md": "At startup/resume, read agents_space/README.md and its working agreement; refresh compact status. If pending_inboxes.by_member lists you, run read_command and follow next_after until null. Use ihav-agent-room guide to find current plugin references when needed; existing conventions/collaboration.md and other room guides may contain project customizations. Preserve project-specific instructions. Peer discussion can be natural and proactive without a task ID; formal work keeps its assignment and authority.",
         root / "CLAUDE.md": "Read AGENTS.md and agents_space/README.md. CLAUDE_01 is the admin interface. Other room members use their assigned role and the same shared state.",
         root / ".gitignore": "agents_space/.runtime/\nagents_space/tasks/active.md\nagents_space/state/current_decisions.md",
     }
@@ -59,7 +59,7 @@ def initialize(project, mode=None):
         prepared = {path: managed_content(path, body) for path, body in files.items()}
         room = store.initialize(mode or "default")
         if mode and mode != room["mode"]:
-            raise RoomError("Existing room keeps its mode. Use agent-room mode pair|advisors to change it.", "conflict")
+            raise RoomError("Existing room keeps its mode. Use ihav-agent-room mode pair|advisors to change it.", "conflict")
         for path, content in prepared.items():
             if not path.exists() or path.read_bytes().decode("utf-8") != content:
                 atomic_write(path, content, path.stat().st_mode & 0o777 if path.exists() else 0o644)

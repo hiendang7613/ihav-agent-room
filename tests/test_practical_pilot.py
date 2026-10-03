@@ -12,7 +12,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from agent_room.common import PLUGIN_ROOT
+from ihav_agent_room.common import PLUGIN_ROOT
 from scripts.prepare_practical_pilot import EDIT_SCOPE, SCOPE, prepare, selected_files, transfer_probes
 
 
@@ -53,8 +53,8 @@ class PracticalPreparationTests(unittest.TestCase):
         self.assertFalse((base / "project/pilots").exists())
         self.assertEqual((base / "project/reference/verify_package.py").read_bytes(),
                          before["pilots/zip_manifest_audit/verify_package.py"][0])
-        self.assertEqual(stat.S_IMODE((base / "project/bin/agent-room").stat().st_mode),
-                         stat.S_IMODE((PLUGIN_ROOT / "bin/agent-room").stat().st_mode))
+        self.assertEqual(stat.S_IMODE((base / "project/bin/ihav-agent-room").stat().st_mode),
+                         stat.S_IMODE((PLUGIN_ROOT / "bin/ihav-agent-room").stat().st_mode))
 
     def test_existing_empty_nonempty_and_symlink_destinations_are_preserved(self):
         empty = self.root / "empty"

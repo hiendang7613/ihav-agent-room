@@ -3,10 +3,10 @@
 import unittest
 from unittest.mock import patch
 
-from agent_room.cli import parser, run
-from agent_room.common import dumps
-from agent_room.knowledge import Knowledge
-from agent_room.store import Store
+from ihav_agent_room.cli import parser, run
+from ihav_agent_room.common import dumps
+from ihav_agent_room.knowledge import Knowledge
+from ihav_agent_room.store import Store
 from test_evidence import EvidenceFixture
 
 
@@ -23,9 +23,9 @@ class SelectiveReadTests(EvidenceFixture, unittest.TestCase):
         answered = self.store.add_note("CODEX_EXPERT", {"kind": "question", "body": "Earlier question"})
         self.store.resolve_note("CODEX_EXPERT", answered["id"], 1, {"state": "answered", "answer": "Counterexample found"})
         before = {str(p): p.read_bytes() for p in self.project.rglob("*") if p.is_file()}
-        with patch("agent_room.knowledge.matches_terms", side_effect=AssertionError("Browse matched knowledge text")), \
-                patch("agent_room.store.matches_terms", side_effect=AssertionError("Browse matched note text")), \
-                patch("agent_room.cli.matches_terms", side_effect=AssertionError("Unfiltered history matched text")):
+        with patch("ihav_agent_room.knowledge.matches_terms", side_effect=AssertionError("Browse matched knowledge text")), \
+                patch("ihav_agent_room.store.matches_terms", side_effect=AssertionError("Browse matched note text")), \
+                patch("ihav_agent_room.cli.matches_terms", side_effect=AssertionError("Unfiltered history matched text")):
             for query in ("", " \t\n "):
                 with self.subTest(query=query):
                     page = knowledge.search(query, limit=1)
@@ -57,7 +57,7 @@ class SelectiveReadTests(EvidenceFixture, unittest.TestCase):
                 db.execute("INSERT INTO approvals VALUES (?,?)", (approval["id"], dumps(approval)))
         before = self.store.path.read_bytes()
         with patch.object(Store, "status", side_effect=AssertionError("Unrelated room status read")), \
-                patch("agent_room.store.source_matches", side_effect=AssertionError("Unrelated source read")):
+                patch("ihav_agent_room.store.source_matches", side_effect=AssertionError("Unrelated source read")):
             for noun, expected in (("approval", approvals), ("intake", None)):
                 actual = run(parser().parse_args(["--project", str(self.project), noun, "list"]))
                 if expected is not None:

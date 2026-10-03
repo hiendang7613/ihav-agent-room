@@ -28,7 +28,7 @@ admin effort, not by message count.
 
 ## Start a useful conversation
 
-Use `agent-room send --to MEMBER --body '...'` for ordinary conversation. `--task` is
+Use `ihav-agent-room send --to MEMBER --body '...'` for ordinary conversation. `--task` is
 optional. Every message is queued for every other room member, so address the intended
 responder directly while inviting useful input from the rest. No task, note, fixed format
 or leader approval is needed merely to ask or discuss.
@@ -39,8 +39,8 @@ it does not grant permission or approve a native action.
 Examples, when relevant to the current project:
 
 ```sh
-agent-room send --to CODEX_EXPERT --body 'Could this queue also delay reminders? I have a hypothesis and would like your take.'
-agent-room send --to CLAUDE_01 --body 'I found a simpler approach. The tradeoff is less configurability; shall we compare it with the current design?'
+ihav-agent-room send --to CODEX_EXPERT --body 'Could this queue also delay reminders? I have a hypothesis and would like your take.'
+ihav-agent-room send --to CLAUDE_01 --body 'I found a simpler approach. The tradeoff is less configurability; shall we compare it with the current design?'
 ```
 
 Questions, sketches, objections and tentative ideas are welcome. Say what is uncertain.
@@ -58,9 +58,9 @@ turns, debate rounds or messages. Rest when there is no useful contribution to m
 Find earlier discussions before reopening the same question or duplicating an idea:
 
 ```sh
-agent-room note search --author CODEX_EXPERT
-agent-room note search --task T-ID
-agent-room note search 'queue retry' --state all
+ihav-agent-room note search --author CODEX_EXPERT
+ihav-agent-room note search --task T-ID
+ihav-agent-room note search 'queue retry' --state all
 ```
 
 Choose your own author filter when useful. Search defaults to open notes; `--state all` includes
@@ -89,9 +89,9 @@ Read the current note, write a JSON conclusion, then use its current version:
 ```
 
 ```sh
-agent-room note show Q-ID
-agent-room note resolve Q-ID --expected-version 1 --input conclusion.json
-agent-room note history Q-ID
+ihav-agent-room note show Q-ID
+ihav-agent-room note resolve Q-ID --expected-version 1 --input conclusion.json
+ihav-agent-room note history Q-ID
 ```
 
 Use actual evidence in the answer. For a proposal use `rejected` or `superseded`; optionally
@@ -119,7 +119,7 @@ with its admin source before treating it as advisory; upgrading never silently d
 
 ## Stay in sync
 
-When useful, read `agent-room status` or `agent-room task context TASK_ID` and look at
+When useful, read `ihav-agent-room status` or `ihav-agent-room task context TASK_ID` and look at
 `attention.by_member`. This advisory view shows current assigned work, pending review and
 known blockers. It suggests something to inspect; choose when a useful response or action
 fits your work and existing authority. Feel free to ask a peer for help or another perspective.

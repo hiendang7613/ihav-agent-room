@@ -7,12 +7,12 @@ from pathlib import Path
 import tempfile
 import zipfile
 
-from agent_room import __version__
-from agent_room.common import PLUGIN_ROOT, RoomError, dumps
-from agent_room.guides import GUIDES
+from ihav_agent_room import __version__
+from ihav_agent_room.common import PLUGIN_ROOT, RoomError, dumps
+from ihav_agent_room.guides import GUIDES
 
 
-PATTERNS = ("agent_room/*.py", "bin/agent-room", ".claude-plugin/*.json", "hooks/*.json",
+PATTERNS = ("ihav_agent_room/*.py", "bin/ihav-agent-room", ".claude-plugin/*.json", "hooks/*.json",
             "resources/*.md", "skills/*/SKILL.md", "templates/**/*.md", "docs/v1.1.md")
 
 
@@ -24,11 +24,11 @@ def build(output, source=PLUGIN_ROOT):
             if path.is_symlink() or not path.resolve().is_relative_to(source) or not path.is_file():
                 raise RoomError(f"Package source must be a regular in-project file: {path}", "conflict")
             selected[path.relative_to(source).as_posix()] = path.read_bytes()
-    required = {"bin/agent-room", "agent_room/cli.py", "hooks/hooks.json", "resources/init-alias.md",
+    required = {"bin/ihav-agent-room", "ihav_agent_room/cli.py", "hooks/hooks.json", "resources/init-alias.md",
                 "skills/init/SKILL.md", "skills/init-agents-space/SKILL.md", "templates/README.md", ".claude-plugin/plugin.json",
                 ".claude-plugin/marketplace.json", "docs/v1.1.md", "resources/distribution-readme.md",
-                "agent_room/guides.py", *GUIDES.values(),
-                "resources/collaboration-guidance.md", "agent_room/knowledge.py", "agent_room/package_verifier.py"}
+                "ihav_agent_room/guides.py", *GUIDES.values(),
+                "resources/collaboration-guidance.md", "ihav_agent_room/knowledge.py", "ihav_agent_room/package_verifier.py"}
     if required - selected.keys():
         raise RoomError("Missing required package files", "package", missing=sorted(required - selected.keys()))
     plugin = json.loads(selected[".claude-plugin/plugin.json"])
@@ -39,13 +39,13 @@ def build(output, source=PLUGIN_ROOT):
     manifest = {"version": __version__, "files_sha256": {name: hashlib.sha256(data).hexdigest() for name, data in sorted(selected.items())}}
     output.parent.mkdir(parents=True, exist_ok=True)
     selected["PACKAGE-MANIFEST.json"] = (dumps(manifest) + "\n").encode()
-    fd, temporary = tempfile.mkstemp(prefix=".agent-room-", suffix=".zip", dir=output.parent)
+    fd, temporary = tempfile.mkstemp(prefix=".ihav-agent-room-", suffix=".zip", dir=output.parent)
     try:
         with os.fdopen(fd, "wb") as stream:
             with zipfile.ZipFile(stream, "w", zipfile.ZIP_DEFLATED) as archive:
                 for name, data in sorted(selected.items()):
-                    info = zipfile.ZipInfo("agent-room/" + name, date_time=(2026, 1, 1, 0, 0, 0))
-                    info.external_attr = (0o100755 if name == "bin/agent-room" else 0o100644) << 16
+                    info = zipfile.ZipInfo("ihav-agent-room/" + name, date_time=(2026, 1, 1, 0, 0, 0))
+                    info.external_attr = (0o100755 if name == "bin/ihav-agent-room" else 0o100644) << 16
                     info.compress_type = zipfile.ZIP_DEFLATED
                     archive.writestr(info, data)
             stream.flush()

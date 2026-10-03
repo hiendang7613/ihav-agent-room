@@ -8,10 +8,10 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from agent_room.cli import parser, run
-from agent_room.common import PLUGIN_ROOT
-from agent_room.scaffold import initialize
-from agent_room.store import Store
+from ihav_agent_room.cli import parser, run
+from ihav_agent_room.common import PLUGIN_ROOT
+from ihav_agent_room.scaffold import initialize
+from ihav_agent_room.store import Store
 from receipts import human_receipt
 
 os.environ.pop("CLAUDE_EFFORT", None)  # Hermetic: the host session effort must not leak into room state.
@@ -28,7 +28,7 @@ class CLITests(unittest.TestCase):
                 room.update(status="running", owner={"session": session})
                 store.put_room(db, room)
             prompt = human_receipt(store, "Implement the scoped task and process its related message", session=session)
-            env = dict(os.environ, AGENT_ROOM_MEMBER="CLAUDE_01", AGENT_ROOM_SESSION_ID=session)
+            env = dict(os.environ, IHAV_AGENT_ROOM_MEMBER="CLAUDE_01", IHAV_AGENT_ROOM_SESSION_ID=session)
             task_input = json.dumps({
                 "title": "Implement A", "request": "Change src/a.py", "acceptance": "Check succeeds",
                 "next": "Inspect the file", "owner": "CLAUDE_01", "source": prompt,
@@ -66,7 +66,7 @@ class CLITests(unittest.TestCase):
                 "authority": "implementation", "scope": ["work.py"],
                 "review_policy": "peer_required", "reviewer": "CODEX_EXPERT"})
             submit_message = store.send("CODEX_01", "CLAUDE_01", "Use the current acceptance", task["id"])
-            main_env = dict(os.environ, AGENT_ROOM_MEMBER="CLAUDE_01", AGENT_ROOM_SESSION_ID=main_session)
+            main_env = dict(os.environ, IHAV_AGENT_ROOM_MEMBER="CLAUDE_01", IHAV_AGENT_ROOM_SESSION_ID=main_session)
             with patch.dict(os.environ, main_env):
                 submission_result = run(parser().parse_args([
                     "--project", directory, "task", "submit", task["id"], "--expected-version", str(task["version"]),
@@ -79,8 +79,8 @@ class CLITests(unittest.TestCase):
             review_message = store.send("CLAUDE_01", "CODEX_EXPERT", "Review the submitted source and acceptance", task["id"])
             reviewer_binding = "fixture-reviewer-binding"
             store.member("CODEX_EXPERT", {"token_hash": hashlib.sha256(reviewer_binding.encode()).hexdigest()})
-            review_env = dict(os.environ, AGENT_ROOM_MEMBER="CODEX_EXPERT", AGENT_ROOM_SESSION_ID="fixture-reviewer",
-                              AGENT_ROOM_BINDING=reviewer_binding)
+            review_env = dict(os.environ, IHAV_AGENT_ROOM_MEMBER="CODEX_EXPERT", IHAV_AGENT_ROOM_SESSION_ID="fixture-reviewer",
+                              IHAV_AGENT_ROOM_BINDING=reviewer_binding)
             with patch.dict(os.environ, review_env):
                 review_result = run(parser().parse_args([
                     "--project", directory, "review", "record", submission["id"], "--ack", review_message["id"],
@@ -106,8 +106,8 @@ class CLITests(unittest.TestCase):
             message = store.send("CODEX_EXPERT", "CLAUDE_01", body)
             other = store.send("CLAUDE_01", "CODEX_EXPERT", "Other recipient after target")
             store.send("CODEX_EXPERT", "CLAUDE_01", "Later question")
-            env = dict(os.environ, AGENT_ROOM_MEMBER="CLAUDE_01", AGENT_ROOM_SESSION_ID="fixture-main")
-            command = [sys.executable, str(PLUGIN_ROOT / "bin/agent-room"), "--project", directory, "--json"]
+            env = dict(os.environ, IHAV_AGENT_ROOM_MEMBER="CLAUDE_01", IHAV_AGENT_ROOM_SESSION_ID="fixture-main")
+            command = [sys.executable, str(PLUGIN_ROOT / "bin/ihav-agent-room"), "--project", directory, "--json"]
             before = store.path.read_bytes()
             result = subprocess.run(command + ["inbox", "--pending", "--compact", "--limit", "1"],
                                     env=env, text=True, capture_output=True, timeout=5)
@@ -125,7 +125,7 @@ class CLITests(unittest.TestCase):
             store.acknowledge("CLAUDE_01", message["id"], "Processed the full content from native delivery")
             before = store.path.read_bytes()
             for binding, expected_id in ((env, message["id"]),
-                                         (env | {"AGENT_ROOM_MEMBER": "CODEX_EXPERT", "AGENT_ROOM_BINDING": "fixture-binding"}, other["id"])):
+                                         (env | {"IHAV_AGENT_ROOM_MEMBER": "CODEX_EXPERT", "IHAV_AGENT_ROOM_BINDING": "fixture-binding"}, other["id"])):
                 result = subprocess.run(command + preview["read_command"].split()[1:],
                                         env=binding, text=True, capture_output=True, timeout=5)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -136,7 +136,7 @@ class CLITests(unittest.TestCase):
                     self.assertEqual(received["status"], "processed")
                     self.assertNotIn("body_preview", received)
             result = subprocess.run(command + preview["read_command"].split()[1:],
-                                    env=env | {"AGENT_ROOM_SESSION_ID": "unbound"}, text=True, capture_output=True, timeout=5)
+                                    env=env | {"IHAV_AGENT_ROOM_SESSION_ID": "unbound"}, text=True, capture_output=True, timeout=5)
             self.assertEqual(result.returncode, 1)
             self.assertEqual(json.loads(result.stdout)["error"]["code"], "identity")
             self.assertEqual(before, store.path.read_bytes())
@@ -153,8 +153,8 @@ class CLITests(unittest.TestCase):
             current = store.send("CODEX_EXPERT", "CLAUDE_01", "A question still open")
             store.acknowledge("CLAUDE_01", old["id"], "Considered the idea")
             before = store.path.read_bytes()
-            env = dict(os.environ, AGENT_ROOM_MEMBER="CLAUDE_01", AGENT_ROOM_SESSION_ID="fixture-main")
-            command = [sys.executable, str(PLUGIN_ROOT / "bin/agent-room"), "--project", directory, "--json", "inbox"]
+            env = dict(os.environ, IHAV_AGENT_ROOM_MEMBER="CLAUDE_01", IHAV_AGENT_ROOM_SESSION_ID="fixture-main")
+            command = [sys.executable, str(PLUGIN_ROOT / "bin/ihav-agent-room"), "--project", directory, "--json", "inbox"]
             for flags, expected_ids in (([], [old["id"], current["id"]]), (["--pending"], [current["id"]])):
                 result = subprocess.run(command + flags, env=env, text=True, capture_output=True, timeout=5)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -164,7 +164,7 @@ class CLITests(unittest.TestCase):
                 result = subprocess.run(command + ["--pending"] + flags, env=env, text=True, capture_output=True, timeout=5)
                 self.assertEqual(result.returncode, 1)
                 self.assertFalse(json.loads(result.stdout)["ok"])
-            result = subprocess.run(command + ["--pending"], env=env | {"AGENT_ROOM_SESSION_ID": "unbound"},
+            result = subprocess.run(command + ["--pending"], env=env | {"IHAV_AGENT_ROOM_SESSION_ID": "unbound"},
                                     text=True, capture_output=True, timeout=5)
             self.assertEqual(result.returncode, 1)
             self.assertEqual(json.loads(result.stdout)["error"]["code"], "identity")
@@ -173,7 +173,7 @@ class CLITests(unittest.TestCase):
     def test_status_stays_readable_when_sandbox_forbids_process_inspection(self):
         with tempfile.TemporaryDirectory() as directory:
             initialize(Path(directory))
-            with patch("agent_room.cli.process_alive", side_effect=PermissionError("ps blocked by sandbox")):
+            with patch("ihav_agent_room.cli.process_alive", side_effect=PermissionError("ps blocked by sandbox")):
                 data = run(parser().parse_args(["--project", directory, "status"]))
             self.assertEqual(data["room"]["status"], "stopped")
             self.assertIsNone(data["supervisor_alive"])
@@ -182,13 +182,13 @@ class CLITests(unittest.TestCase):
 
     def test_invalid_arguments_have_json_error_and_no_effect(self):
         for args in (("stop", "--timeout", "-1"), ("init", "--mode", "invalid"), ("does-not-exist",)):
-            result = subprocess.run([sys.executable, str(PLUGIN_ROOT / "bin/agent-room"), *args],
+            result = subprocess.run([sys.executable, str(PLUGIN_ROOT / "bin/ihav-agent-room"), *args],
                 cwd="/tmp", text=True, capture_output=True, timeout=5)
             self.assertEqual(result.returncode, 2)
             self.assertEqual(json.loads(result.stdout)["error"]["code"], "arguments")
 
     def test_help_needs_no_room(self):
-        result = subprocess.run([sys.executable, str(PLUGIN_ROOT / "bin/agent-room"), "--help"],
+        result = subprocess.run([sys.executable, str(PLUGIN_ROOT / "bin/ihav-agent-room"), "--help"],
             cwd="/tmp", text=True, capture_output=True, timeout=5)
         self.assertEqual(result.returncode, 0)
         self.assertIn("doctor", result.stdout)

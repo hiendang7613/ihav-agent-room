@@ -23,7 +23,7 @@ def emit(value):
 
 def record(kind, data):
     with open(ROOT / "effects.jsonl", "a") as stream:
-        stream.write(json.dumps({"kind": kind, "data": data, "member": os.environ.get("AGENT_ROOM_MEMBER")}) + "\n")
+        stream.write(json.dumps({"kind": kind, "data": data, "member": os.environ.get("IHAV_AGENT_ROOM_MEMBER")}) + "\n")
 
 
 def write_registry(path, data, replace=os.replace):
@@ -45,7 +45,7 @@ def commit_external_effect(effect_id):
 
 
 def spawn_daemon(session, project, name, env=None, kind="background"):
-    child_env = env or {key: value for key, value in os.environ.items() if not key.startswith("AGENT_ROOM_")}
+    child_env = env or {key: value for key, value in os.environ.items() if not key.startswith("IHAV_AGENT_ROOM_")}
     process = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "--daemon", session, project, name, kind],
                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                start_new_session=True, env=child_env)
@@ -60,7 +60,7 @@ def spawn_daemon(session, project, name, env=None, kind="background"):
 
 
 def hide_registry_name(name):
-    return bool(name and name.startswith("AGENT_ROOM_SMOKE_MAIN_")
+    return bool(name and name.startswith("IHAV_AGENT_ROOM_SMOKE_MAIN_")
                 and (ROOT / "hide_registry_name").exists())
 
 
@@ -137,7 +137,7 @@ def app_server():
             text = params["input"][0]["text"]
             broadcast = re.match(r"\[Agent Room peer broadcast [^ ]+ from [^ ]+ to ([^;]+);", text)
             direct_addressee = broadcast.group(1) if broadcast else None
-            is_direct_request = direct_addressee is None or direct_addressee == os.environ.get("AGENT_ROOM_MEMBER")
+            is_direct_request = direct_addressee is None or direct_addressee == os.environ.get("IHAV_AGENT_ROOM_MEMBER")
             if "crash after input" in text and is_direct_request:
                 effect_id = params.get("clientUserMessageId")
                 if effect_id:
@@ -154,7 +154,7 @@ def app_server():
                 continue
             active_turn = active_turn or str(uuid.uuid4())
             if "send peer result" in text and is_direct_request:
-                result = subprocess.run(["agent-room", "send", "--to", "CLAUDE_01"],
+                result = subprocess.run(["ihav-agent-room", "send", "--to", "CLAUDE_01"],
                     input="Fixture peer finding; source remains unchanged", text=True, capture_output=True)
                 record("peer_cli", {"returncode": result.returncode, "result": result.stdout})
             emit({"id": request_id, "result": {"turn": {"id": active_turn, "status": "inProgress"}}})
@@ -197,7 +197,7 @@ def main():
         if before_agents.exists():
             entries = json.loads(before_agents.read_text(encoding="utf-8"))
             for item in entries:
-                item_name = os.environ.get("AGENT_ROOM_SMOKE_RUN_NAME", "") if item.get("name") == "$MAIN_NAME" else item.get("name", "")
+                item_name = os.environ.get("IHAV_AGENT_ROOM_SMOKE_RUN_NAME", "") if item.get("name") == "$MAIN_NAME" else item.get("name", "")
                 spawn_daemon(item["sessionId"], item["cwd"], item_name,
                              kind=item.get("kind", "background"))
             before_agents.unlink()
@@ -239,7 +239,7 @@ def main():
         record("claude_start", {"id": session, "resume": flag == "--resume",
                                  "model": args[args.index("--model") + 1] if "--model" in args else None,
                                  "effort": args[args.index("--effort") + 1] if "--effort" in args else None})
-        child_env = {key: value for key, value in os.environ.items() if not key.startswith("AGENT_ROOM_")}
+        child_env = {key: value for key, value in os.environ.items() if not key.startswith("IHAV_AGENT_ROOM_")}
         if options.get("settings"):
             child_env.update(json.loads(Path(options["settings"]).read_text()).get("env", {}))
         spawn_daemon(session, os.getcwd(), agent_name or "", child_env)

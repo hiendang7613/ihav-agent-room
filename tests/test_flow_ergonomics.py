@@ -15,9 +15,9 @@ import time
 import unittest
 from unittest.mock import patch
 
-import agent_room.cli as cli_module
-from agent_room.cli import main, parser, run
-from agent_room.common import PLUGIN_ROOT
+import ihav_agent_room.cli as cli_module
+from ihav_agent_room.cli import main, parser, run
+from ihav_agent_room.common import PLUGIN_ROOT
 from test_evidence import EvidenceFixture
 
 
@@ -28,7 +28,7 @@ class FlowErgonomicsTests(EvidenceFixture, unittest.TestCase):
             room = self.store.get_room(db)
             room["owner"] = {"session": "main"}
             self.store.put_room(db, room)
-        env = patch.dict(os.environ, AGENT_ROOM_MEMBER="CLAUDE_01", AGENT_ROOM_SESSION_ID="main")
+        env = patch.dict(os.environ, IHAV_AGENT_ROOM_MEMBER="CLAUDE_01", IHAV_AGENT_ROOM_SESSION_ID="main")
         env.start()
         self.addCleanup(env.stop)
 

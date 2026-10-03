@@ -12,15 +12,15 @@ from unittest.mock import patch
 
 os.environ.pop("CLAUDE_EFFORT", None)  # Hermetic: the host session effort must not leak into room state.
 
-from agent_room.common import GATEWAY, MODES, RoomError, process_stamp
-from agent_room.hooks import session_effort
-from agent_room.native import start_claude
-from agent_room.roster import MODE_SETTINGS, NEW_ROOM_MODE, mode_settings
-from agent_room.runtime import Supervisor, change_mode
-from agent_room.scaffold import initialize
-from agent_room.store import Store
+from ihav_agent_room.common import GATEWAY, MODES, RoomError, process_stamp
+from ihav_agent_room.hooks import session_effort
+from ihav_agent_room.native import start_claude
+from ihav_agent_room.roster import MODE_SETTINGS, NEW_ROOM_MODE, mode_settings
+from ihav_agent_room.runtime import Supervisor, change_mode
+from ihav_agent_room.scaffold import initialize
+from ihav_agent_room.store import Store
 
-CLI = Path(__file__).resolve().parents[1] / "bin" / "agent-room"
+CLI = Path(__file__).resolve().parents[1] / "bin" / "ihav-agent-room"
 
 
 class ModeRosterTests(unittest.TestCase):
@@ -147,20 +147,20 @@ class ModeStoreTests(unittest.TestCase):
         room = store.room()
         self.assertTrue(result["restarting"])
         self.assertEqual((room["mode"], room["status"], room["restart_requested"], room["manual_stop"]),
-                         ("pair", "stopping", True, False))
+                         ("pair", "running", True, False))
 
 
 class ModeCliTests(unittest.TestCase):
     def test_init_defaults_to_pair_and_names_the_switch_command(self):
         with tempfile.TemporaryDirectory(prefix="room init mode ") as directory:
-            env = dict(os.environ, AGENT_ROOM_MEMBER="CLAUDE_01", AGENT_ROOM_SKIP_ALIAS="1")
+            env = dict(os.environ, IHAV_AGENT_ROOM_MEMBER="CLAUDE_01", IHAV_AGENT_ROOM_SKIP_ALIAS="1")
             result = subprocess.run([sys.executable, str(CLI), "--project", directory, "--json", "init", "--no-start"],
                                     env=env, capture_output=True, text=True, timeout=30)
             data = json.loads(result.stdout)["data"]
             self.assertEqual(data["mode"], "pair")
             self.assertEqual(data["members"], ["CLAUDE_01", "CODEX_01"])
             self.assertIn("pair mode", data["mode_note"])
-            self.assertIn("/agent-room:mode advisors", data["mode_note"])
+            self.assertIn("/ihav-agent-room:mode advisors", data["mode_note"])
             shown = json.loads(subprocess.run([sys.executable, str(CLI), "--project", directory, "--json", "mode"],
                                               env=env, capture_output=True, text=True, timeout=30).stdout)["data"]
             self.assertEqual((shown["mode"], shown["choices"]), ("pair", ["pair", "advisors"]))
@@ -171,10 +171,10 @@ class ModeCliWriteTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="room cli modes ")
         self.addCleanup(self.temp.cleanup)
-        self.env = dict(os.environ, AGENT_ROOM_MEMBER="CLAUDE_01", AGENT_ROOM_SKIP_ALIAS="1")
+        self.env = dict(os.environ, IHAV_AGENT_ROOM_MEMBER="CLAUDE_01", IHAV_AGENT_ROOM_SKIP_ALIAS="1")
 
     def call(self, *args, member=None, ok=True):
-        env = dict(self.env, AGENT_ROOM_MEMBER=member) if member else self.env
+        env = dict(self.env, IHAV_AGENT_ROOM_MEMBER=member) if member else self.env
         result = subprocess.run([sys.executable, str(CLI), "--project", self.temp.name, "--json", *args],
                                 env=env, capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode == 0, ok, result.stdout + result.stderr)
@@ -185,7 +185,7 @@ class ModeCliWriteTests(unittest.TestCase):
         self.call("init", "--no-start", "--mode", "default")
         again = self.call("init", "--no-start")
         self.assertEqual((again["mode"], len(again["members"])), ("default", 4))
-        self.assertIn("/agent-room:mode", again["mode_note"])
+        self.assertIn("/ihav-agent-room:mode", again["mode_note"])
 
     def test_mode_and_effort_writes_through_the_cli(self):
         self.call("init", "--no-start")
@@ -218,8 +218,8 @@ class ModeNativeTests(unittest.TestCase):
             async def failed_launch(*args, **kwargs):
                 raise OSError("no native launch in tests")
 
-            with patch("agent_room.native.claude_agents", return_value=[]), \
-                    patch("agent_room.native.asyncio.create_subprocess_exec", new=failed_launch):
+            with patch("ihav_agent_room.native.claude_agents", return_value=[]), \
+                    patch("ihav_agent_room.native.asyncio.create_subprocess_exec", new=failed_launch):
                 with self.assertRaises(OSError):
                     asyncio.run(start_claude(project, "existing-session", True, {"PATH": "/usr/bin"},
                         project / "CLAUDE_EXPERT.log", member="CLAUDE_EXPERT", model="opus", effort="low"))

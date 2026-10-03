@@ -11,9 +11,9 @@ import os
 import unittest
 from unittest.mock import patch
 
-from agent_room import hooks
-from agent_room.native import COLLABORATION_GUIDANCE, message_text, role_instructions
-from agent_room.store import MAX_MESSAGE_CHARS, MAX_MESSAGE_ID_BYTES, MAX_REVIEW_PACKET_BYTES
+from ihav_agent_room import hooks
+from ihav_agent_room.native import COLLABORATION_GUIDANCE, message_text, role_instructions
+from ihav_agent_room.store import MAX_MESSAGE_CHARS, MAX_MESSAGE_ID_BYTES, MAX_REVIEW_PACKET_BYTES
 from test_evidence import EvidenceFixture
 
 os.environ.pop("CLAUDE_EFFORT", None)  # Hermetic: the host session effort must not leak into room state.
@@ -31,7 +31,8 @@ BUDGETS = {
     # 2026-10-01: the 1,500-byte packet cap keeps three paths/eight bounded claims; FYI copies carry no packet.
     "review_delivery_total": 2050,
     "review_fyi_total": 1300,
-    "status_compact_one_task": 2700,
+    # 2026-10-03: +40 bytes buy the ihav-agent-room command name in status next steps.
+    "status_compact_one_task": 2740,
     # 2026-10-02: +20 bytes buy the admin's eight-section reply shape (6. Risks, 7. AIIdeas) in the guidance line.
     # 2026-10-03: +90 bytes buy the admin's three reply zones (Agents-Zone, Result-Zone, Admin-Zone).
     "main_sessionstart_context": 1210,
@@ -120,7 +121,7 @@ class ContextBudgetTests(EvidenceFixture, unittest.TestCase):
         payload = {"cwd": str(self.project), "session_id": "main"}
         with patch.object(hooks, "bind_main"), patch.object(hooks, "start_room", return_value={"reason": "x"}), \
                 patch.object(hooks, "install_alias", return_value=False), \
-                patch.dict(os.environ, AGENT_ROOM_MEMBER="CLAUDE_01", CLAUDE_ENV_FILE=""):
+                patch.dict(os.environ, IHAV_AGENT_ROOM_MEMBER="CLAUDE_01", CLAUDE_ENV_FILE=""):
             def context(**fields):
                 return hooks.handle(payload | fields)["hookSpecificOutput"]["additionalContext"]
             found["main_sessionstart_context"] = size(context(hook_event_name="SessionStart", source="startup"))

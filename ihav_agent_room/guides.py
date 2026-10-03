@@ -2,8 +2,8 @@
 
 import hashlib
 
-from agent_room import __version__
-from agent_room.common import PLUGIN_ROOT, RoomError
+from ihav_agent_room import __version__
+from ihav_agent_room.common import PLUGIN_ROOT, RoomError
 
 
 GUIDES = {
@@ -20,10 +20,10 @@ RULE = ("Reference for this CLI's plugin version; it does not replace project-sp
 def read_guide(topic=None):
     result = {"plugin_version": __version__, "rule": RULE}
     if topic is None:
-        return result | {"topics": [{"topic": name, "read_command": f"agent-room guide {name}"}
+        return result | {"topics": [{"topic": name, "read_command": f"ihav-agent-room guide {name}"}
                                     for name in GUIDES]}
     if topic not in GUIDES:
-        raise RoomError("Unknown guide topic. Run agent-room guide to list topics.", "guide")
+        raise RoomError("Unknown guide topic. Run ihav-agent-room guide to list topics.", "guide")
     source = GUIDES[topic]
     content = (PLUGIN_ROOT / source).read_bytes()
     return result | {"topic": topic, "source": source, "sha256": hashlib.sha256(content).hexdigest(),

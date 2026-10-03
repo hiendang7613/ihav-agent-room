@@ -11,13 +11,13 @@ import zipfile
 from pathlib import Path
 from unittest import mock
 
-from agent_room.package_verifier import VerificationError, verify_archive
+from ihav_agent_room.package_verifier import VerificationError, verify_archive
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-SCRIPT = PROJECT_ROOT / "bin" / "agent-room"
+SCRIPT = PROJECT_ROOT / "bin" / "ihav-agent-room"
 FIXTURE = PROJECT_ROOT / "dist" / "agent-room-0.3.1.zip"
 FIXTURE_SHA256 = "22da094310a5a88f95bd3d8e23ebc12ecf0cf78e395b6e5eb04f6256bb5df28e"
-MANIFEST = "agent-room/PACKAGE-MANIFEST.json"
+MANIFEST = "ihav-agent-room/PACKAGE-MANIFEST.json"
 MIB = 1024 * 1024
 
 
@@ -53,7 +53,7 @@ class VerifierTestCase(unittest.TestCase):
         """Build an archive from payload files plus a manifest (valid by default)."""
         body = manifest_bytes(files) if manifest is None else manifest
         entries = [(MANIFEST, body)]
-        entries += [("agent-room/" + rel, data) for rel, data in files.items()]
+        entries += [("ihav-agent-room/" + rel, data) for rel, data in files.items()]
         entries += list(extra)
         return self.write_zip(entries, compression)
 
@@ -70,7 +70,7 @@ class VerifierTestCase(unittest.TestCase):
             capture_output=True,
             text=True,
             cwd=self.workdir,
-            env=dict(os.environ, PATH="", AGENT_ROOM_SESSION_ID="unbound", AGENT_ROOM_MEMBER="CODEX_EXPERT"),
+            env=dict(os.environ, PATH="", IHAV_AGENT_ROOM_SESSION_ID="unbound", IHAV_AGENT_ROOM_MEMBER="CODEX_EXPERT"),
             timeout=5,
             check=False,
         )
@@ -123,7 +123,7 @@ class AcceptanceTests(VerifierTestCase):
         self.assertEqual(verify_archive(self.package(files))["files_checked"], 255)
 
     def test_unspecified_unix_mode_is_regular(self):
-        info = zipfile.ZipInfo("agent-room/plain")
+        info = zipfile.ZipInfo("ihav-agent-room/plain")
         info.external_attr = 0
         files = {"plain": b"data"}
         path = self.write_zip([(MANIFEST, manifest_bytes(files)), (info, b"data")])
@@ -178,7 +178,7 @@ class ArchiveStructureTests(VerifierTestCase):
     def test_encrypted_entry(self):
         path = self.package({"a": b"alpha"})
         data = bytearray(path.read_bytes())
-        central = data.rindex(b"PK\x01\x02")  # last central header: agent-room/a
+        central = data.rindex(b"PK\x01\x02")  # last central header: ihav-agent-room/a
         data[central + 8] |= 0x01  # general-purpose flag: encrypted
         path.write_bytes(bytes(data))
         self.assertRejected(path, "encrypted")
@@ -202,7 +202,7 @@ class ArchiveStructureTests(VerifierTestCase):
         for compression in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
             with self.subTest(compression=compression):
                 path = self.package({"a": b"alpha"}, compression=compression)
-                self.overstate_size(path, "agent-room/a", 5)
+                self.overstate_size(path, "ihav-agent-room/a", 5)
                 self.assertRejected(path, "size mismatch")
                 self.assertCliError(self.run_cli(path))
 
@@ -213,7 +213,7 @@ class ArchiveStructureTests(VerifierTestCase):
         self.assertRejected(path, "size mismatch")
 
     def test_missing_manifest(self):
-        self.assertRejected(self.write_zip([("agent-room/a", b"alpha")]), "missing")
+        self.assertRejected(self.write_zip([("ihav-agent-room/a", b"alpha")]), "missing")
 
     def test_duplicate_manifest(self):
         body = manifest_bytes({})
@@ -222,31 +222,31 @@ class ArchiveStructureTests(VerifierTestCase):
 
     def test_duplicate_payload_name(self):
         files = {"a": b"alpha"}
-        path = self.package(files, extra=[("agent-room/a", b"alpha")])
+        path = self.package(files, extra=[("ihav-agent-room/a", b"alpha")])
         self.assertRejected(path, "duplicate ZIP entry")
 
     def test_directory_entry(self):
-        self.assertRejected(self.package({}, extra=[("agent-room/dir/", b"")]))
+        self.assertRejected(self.package({}, extra=[("ihav-agent-room/dir/", b"")]))
 
     def test_unix_directory_mode(self):
-        info = zipfile.ZipInfo("agent-room/dir")
+        info = zipfile.ZipInfo("ihav-agent-room/dir")
         info.external_attr = (stat.S_IFDIR | 0o755) << 16
         self.assertRejected(self.package({}, extra=[(info, b"")]), "not a regular file")
 
     def test_msdos_directory_attribute(self):
-        info = zipfile.ZipInfo("agent-room/dir")
+        info = zipfile.ZipInfo("ihav-agent-room/dir")
         info.external_attr = 0x10
         self.assertRejected(self.package({}, extra=[(info, b"")]), "not a regular file")
 
     def test_symlink_entry(self):
-        info = zipfile.ZipInfo("agent-room/link")
+        info = zipfile.ZipInfo("ihav-agent-room/link")
         info.external_attr = (stat.S_IFLNK | 0o777) << 16
         files = {"link": b"../../etc/passwd"}
         path = self.write_zip([(MANIFEST, manifest_bytes(files)), (info, files["link"])])
         self.assertRejected(path, "not a regular file")
 
     def test_fifo_entry(self):
-        info = zipfile.ZipInfo("agent-room/pipe")
+        info = zipfile.ZipInfo("ihav-agent-room/pipe")
         info.external_attr = (stat.S_IFIFO | 0o644) << 16
         files = {"pipe": b""}
         path = self.write_zip([(MANIFEST, manifest_bytes(files)), (info, b"")])
@@ -254,15 +254,15 @@ class ArchiveStructureTests(VerifierTestCase):
 
     def test_non_canonical_entry_names(self):
         names = [
-            "/agent-room/a",
+            "/ihav-agent-room/a",
             "other/a",
-            "agent-room",
-            "agent-room/",
-            "agent-room//a",
-            "agent-room/./a",
-            "agent-room/../a",
-            "agent-room/a/..",
-            "agent-room/a\\b",
+            "ihav-agent-room",
+            "ihav-agent-room/",
+            "ihav-agent-room//a",
+            "ihav-agent-room/./a",
+            "ihav-agent-room/../a",
+            "ihav-agent-room/a/..",
+            "ihav-agent-room/a\\b",
         ]
         for name in names:
             with self.subTest(name=name):
@@ -270,11 +270,11 @@ class ArchiveStructureTests(VerifierTestCase):
 
     def test_nul_in_original_entry_name(self):
         # zipfile truncates ZipInfo.filename at NUL; the original spelling must be rejected.
-        path = self.package({}, extra=[("agent-room/aXb", b"x")])
-        data = path.read_bytes().replace(b"agent-room/aXb", b"agent-room/a\x00b")
+        path = self.package({}, extra=[("ihav-agent-room/aXb", b"x")])
+        data = path.read_bytes().replace(b"ihav-agent-room/aXb", b"ihav-agent-room/a\x00b")
         path.write_bytes(data)
         with zipfile.ZipFile(path) as archive:
-            self.assertIn("agent-room/a", archive.namelist())
+            self.assertIn("ihav-agent-room/a", archive.namelist())
         self.assertRejected(path, "non-canonical entry path")
 
 
@@ -348,7 +348,7 @@ class ManifestTests(VerifierTestCase):
         self.assertManifestRejected(body, "missing from archive")
 
     def test_extra_payload(self):
-        path = self.package({}, extra=[("agent-room/extra", b"x")])
+        path = self.package({}, extra=[("ihav-agent-room/extra", b"x")])
         self.assertRejected(path, "not in manifest")
 
     def test_hash_mismatch(self):
