@@ -202,3 +202,17 @@ class CLITests(unittest.TestCase):
             self.assertFalse(scope["execute"])
             self.assertEqual(scope["proposed_scope"]["script_dispatches"], 2)
             self.assertEqual(list(Path(directory).iterdir()), [])
+
+
+class SessionFallbackTests(unittest.TestCase):
+    """2026-10-04: after /reload-plugins, sessions that started on an older plugin lack IHAV_AGENT_ROOM_SESSION_ID."""
+
+    def test_the_host_and_legacy_variables_fill_in(self):
+        import os
+        from unittest.mock import patch
+        from ihav_agent_room.common import main_session_id
+        for env, expected in (({"IHAV_AGENT_ROOM_SESSION_ID": "a", "CLAUDE_CODE_SESSION_ID": "b"}, "a"),
+                              ({"CLAUDE_CODE_SESSION_ID": "b", "AGENT_ROOM_SESSION_ID": "c"}, "b"),
+                              ({"AGENT_ROOM_SESSION_ID": "c"}, "c"), ({}, "")):
+            with self.subTest(env=env), patch.dict(os.environ, env, clear=True):
+                self.assertEqual(main_session_id(), expected)

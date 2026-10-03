@@ -8,7 +8,7 @@ from pathlib import Path
 import sqlite3
 import json
 
-from ihav_agent_room.common import (GATEWAY, MEMBERS, MODES, RoomError, acting_member, canonical_member, atomic_write, dumps,
+from ihav_agent_room.common import (GATEWAY, MEMBERS, MODES, RoomError, acting_member, canonical_member, atomic_write, dumps, main_session_id,
                                file_lock, fingerprint, native_event_prompt, now, overlaps, scoped_path, uid)
 from ihav_agent_room.evidence import bounded, capture, digest, matches_terms, nonempty_strings, source_matches
 from ihav_agent_room.provenance import assess_chain
@@ -287,7 +287,7 @@ class Store:
 
     def actor(self):
         name = canonical_member(os.environ.get("IHAV_AGENT_ROOM_MEMBER", ""))
-        session = os.environ.get("IHAV_AGENT_ROOM_SESSION_ID", "")
+        session = main_session_id()
         with self.read() as db:
             room = self.get_room(db)
             if name == GATEWAY:

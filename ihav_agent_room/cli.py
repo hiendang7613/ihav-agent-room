@@ -11,7 +11,7 @@ import sys
 import time
 
 from ihav_agent_room import __version__
-from ihav_agent_room.common import GATEWAY, MEMBERS, MODES, RoomError, acting_member, canonical_member, dumps, fingerprint, process_alive
+from ihav_agent_room.common import GATEWAY, MEMBERS, MODES, RoomError, acting_member, main_session_id, canonical_member, dumps, fingerprint, process_alive
 from ihav_agent_room.evidence import matches_terms
 from ihav_agent_room.contracts import TYPES as CONTRACT_TYPES, Contracts
 from ihav_agent_room.globalspace import GlobalSpace
@@ -346,14 +346,14 @@ def run(args):
             checks = doctor()
             if not checks["ok"]:
                 raise RoomError("Dependencies are missing. No project files changed.", "dependency", checks=checks)
-            if not os.environ.get("IHAV_AGENT_ROOM_SESSION_ID"):
+            if not main_session_id():
                 raise RoomError("Run /ihav-agent-room:init in Claude Code, or use init --no-start for files only", "identity")
         # New rooms start in pair mode (admin decision 2026-10-03); the library default keeps four members.
         room = initialize(args.project, args.mode or (None if store.exists() else NEW_ROOM_MODE))
         mode_info = {"mode": room["mode"], "members": list(MODES[room["mode"]]), "mode_note": mode_note(room["mode"])}
         if args.no_start:
             return {"initialized": True, "started": False, "room": room, **mode_info}
-        return {**start_room(store, os.environ.get("IHAV_AGENT_ROOM_SESSION_ID"),
+        return {**start_room(store, main_session_id(),
                              permission_mode=os.environ.get("IHAV_AGENT_ROOM_PERMISSION_MODE", "default")), **mode_info}
     if command == "global":
         return global_command(store, args)
@@ -368,7 +368,7 @@ def run(args):
             raise RoomError("Supervisor failed", "native", detail=room["error"])
         return {"stopped": room["status"] == "stopped"}
     if command == "start":
-        return start_room(store, os.environ.get("IHAV_AGENT_ROOM_SESSION_ID"), args.mode,
+        return start_room(store, main_session_id(), args.mode,
                           os.environ.get("IHAV_AGENT_ROOM_PERMISSION_MODE", "default"))
     if command == "mode":
         if not args.mode:
@@ -528,7 +528,7 @@ def run(args):
             body = read_input(args.body_file)
             if not body.strip() or not args.source_ref.strip():
                 raise RoomError("Recovery requires original human text and its source reference")
-            receipt = store.intake(os.environ["IHAV_AGENT_ROOM_SESSION_ID"], body, origin="manual_recovery:" + args.source_ref)
+            receipt = store.intake(main_session_id(), body, origin="manual_recovery:" + args.source_ref)
             notification = store.broadcast_gateway_prompt(body, "recovery\0" + args.source_ref,
                                                           receipt_id=receipt, provenance_state="manual_recovery")
             return {"receipt": receipt, "origin": "manual_recovery", "native_permission_approval_eligible": False,

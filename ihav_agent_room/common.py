@@ -20,6 +20,19 @@ MODES = dict(MODE_MEMBERS)
 MEMBERS = ROSTER_MEMBERS
 
 
+def main_session_id():
+    """This process's Claude session: the hook-exported variable, else the host's own, else the pre-rename name.
+
+    `/reload-plugins` does not rerun SessionStart, so IHAV_AGENT_ROOM_SESSION_ID can be missing in a session that
+    started on an older plugin (reported by ai-ucg-design 2026-10-04). Identity is still checked against the room
+    owner and the live native registry.
+    """
+    for key in ("IHAV_AGENT_ROOM_SESSION_ID", "CLAUDE_CODE_SESSION_ID", "AGENT_ROOM_SESSION_ID"):
+        if os.environ.get(key):
+            return os.environ[key]
+    return ""
+
+
 def acting_member(default=GATEWAY):
     """The member this process acts as: IHAV_AGENT_ROOM_MEMBER (an id or an alias), else `default`."""
     return canonical_member(os.environ.get("IHAV_AGENT_ROOM_MEMBER", default))
