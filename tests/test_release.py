@@ -66,6 +66,25 @@ class LauncherTests(ReleaseFixture, unittest.TestCase):
         result = activate(rollback=True)
         self.assertEqual((result["activated"], self.version_via(new)), ("9.0.0", "9.0.0"))
 
+    def test_repeating_the_current_activation_keeps_the_rollback_target(self):
+        old, new = self.install("9.0.0"), self.install("9.1.0")
+        activate(str(old))
+        activate(str(new))
+        self.assertTrue(activate(str(new))["unchanged"])
+        self.assertEqual(activate(rollback=True)["activated"], "9.0.0")
+
+    def test_a_non_object_pointer_is_reported_and_can_be_replaced(self):
+        new = self.install("9.1.0")
+        pointer_path().parent.mkdir(parents=True)
+        for content in ('["invalid"]', '{"root": 3, "previous": "x", "launcher_protocol": 1}'):
+            with self.subTest(content=content):
+                pointer_path().write_text(content)
+                shown = activate()
+                self.assertEqual((shown["pointer_state"], shown["active"], shown["previous"]), ("invalid", None, None))
+                with self.assertRaises(RoomError):
+                    activate(rollback=True)
+                self.assertEqual(activate(str(new))["activated"], "9.1.0")
+
     def test_a_development_checkout_ignores_the_pointer(self):
         activate(str(self.install("9.1.0")))
         self.assertEqual(self.version_via(SOURCE), __version__)
@@ -125,6 +144,9 @@ class SupervisorUpgradeTests(ReleaseFixture, unittest.TestCase):
             room.update(status="running", generation="g1", manual_stop=False)
             self.store.put_room(db, room)
         self.supervisor = Supervisor(self.store, "g1")
+        self.follows = patch("ihav_agent_room.runtime.follows_pointer", return_value=True)  # Act as an installed copy.
+        self.follows.start()
+        self.addCleanup(patch.stopall)
 
     def transition(self):
         return self.store.room().get("mode_transition")
@@ -148,6 +170,17 @@ class SupervisorUpgradeTests(ReleaseFixture, unittest.TestCase):
         self.supervisor.next_release_check = 0
         self.supervisor.request_upgrade()
         self.assertIsNone(self.transition())
+
+    def test_a_development_or_pinned_supervisor_never_schedules_an_upgrade(self):
+        """Its launcher would restart into the same copy, so a drain would loop without progress (review M-1d10513c)."""
+        self.follows.stop()
+        activate(str(self.install("9.1.0")))
+        for env in ({}, {"IHAV_AGENT_ROOM_PIN": "1"}):
+            with self.subTest(env=env), patch.dict(os.environ, env):
+                self.supervisor.next_release_check = 0
+                self.supervisor.request_upgrade()
+                self.assertIsNone(self.transition())
+        self.follows.start()
 
     def test_the_check_is_throttled(self):
         self.supervisor.request_upgrade()

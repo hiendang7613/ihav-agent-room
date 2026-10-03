@@ -17,7 +17,7 @@ from ihav_agent_room.common import (GATEWAY, MEMBERS, MODES, acting_member, PLUG
 from ihav_agent_room.native import (CodexClient, claude_agents, codex_usage_snapshot, doctor, exact_claude,
                                owned_descendants, send_claude, start_claude, stop_claude_worker,
                                stop_descendants, wait_for_exit)
-from ihav_agent_room.release import active_release
+from ihav_agent_room.release import active_release, follows_pointer
 from ihav_agent_room.roster import ROSTER_BY_NAME, SELECTABLE_MODES, launch_config
 from ihav_agent_room.store import FYI_CONTEXT_SQL, Store
 
@@ -494,6 +494,8 @@ class Supervisor:
         if time.monotonic() < self.next_release_check:
             return
         self.next_release_check = time.monotonic() + 30
+        if not follows_pointer():
+            return  # A development or pinned copy would restart into itself and loop.
         target = active_release()
         if not target or target["version"] == __version__:
             return

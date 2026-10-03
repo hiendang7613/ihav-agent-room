@@ -50,13 +50,23 @@ def inspect_root(root):
 
 
 def read_pointer():
+    """The pointer record as a dict, or None when it is absent or unusable (the launcher then runs its own copy)."""
     path = pointer_path()
     if path.is_symlink() or not path.is_file():
         return None
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        record = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
+    return record if isinstance(record, dict) else None
+
+
+def follows_pointer(root=PLUGIN_ROOT):
+    """Whether this copy's launcher follows the pointer: an installed copy that is not pinned (mirrors the launcher)."""
+    if os.environ.get("IHAV_AGENT_ROOM_PIN") == "1":
+        return False
+    root = Path(root).resolve()
+    return any(parent.resolve() in root.parents for parent in allowed_parents())
 
 
 def active_release():
@@ -70,29 +80,39 @@ def active_release():
         return None
 
 
+def previous_of(record):
+    previous = (record or {}).get("previous")
+    if isinstance(previous, dict) and isinstance(previous.get("root"), str):
+        return {"root": previous["root"], "version": previous.get("version")}
+    return None
+
+
 def describe():
-    pointer = read_pointer() or {}
-    return {"loaded": {"version": __version__, "root": str(PLUGIN_ROOT)}, "active": active_release(),
-            "previous": pointer.get("previous"), "pointer": str(pointer_path())}
+    path, record = pointer_path(), read_pointer()
+    state = "absent" if not path.exists() and not path.is_symlink() else ("ok" if active_release() else "invalid")
+    return {"loaded": {"version": __version__, "root": str(PLUGIN_ROOT), "follows_pointer": follows_pointer()},
+            "active": active_release(), "previous": previous_of(record), "pointer": str(path), "pointer_state": state}
 
 
 def activate(root=None, rollback=False):
     current = read_pointer() or {}
     if rollback:
-        previous = current.get("previous")
+        previous = previous_of(current)
         if not previous:
             raise RoomError("No previous release is recorded to roll back to", "not_found")
         root = previous["root"]
     if root is None:
         return describe()
     target = inspect_root(Path(root))
+    if active_release() and current.get("root") == target["root"]:
+        return describe() | {"activated": target["version"], "rolled_back": False, "unchanged": True}  # Keep history.
     # Run the copy itself, bypassing any pointer, before every session starts using it.
     result = subprocess.run([sys.executable, str(Path(target["root"]) / "bin" / "ihav-agent-room"), "--version"],
                             capture_output=True, text=True, timeout=30, env=dict(os.environ, IHAV_AGENT_ROOM_PIN="1"))
     if result.returncode or target["version"] not in result.stdout:
         raise RoomError(f"Release {target['version']} at {target['root']} failed its smoke check", "native",
                         diagnostic=(result.stderr or result.stdout)[-2000:])
-    previous = {key: current[key] for key in ("root", "version") if key in current} or None
+    previous = {"root": current["root"], "version": current.get("version")} if isinstance(current.get("root"), str) else None
     record = target | {"activated": now(), "previous": previous}
     atomic_write(pointer_path(), json.dumps(record, indent=2) + "\n", mode=0o644)
     return describe() | {"activated": target["version"], "rolled_back": rollback}
