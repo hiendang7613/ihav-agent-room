@@ -35,7 +35,7 @@ CREATE TABLE events (seq INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL,
 # DEC-009 (admin, 2026-09-30) and the admin's follow-up answer in the Claude session: a receipt whose host provenance is not
 # confirmed as human is refused for these uses. Accounting (bookkeeping) and creating an analysis-only task are recorded
 # in prompt.consumed with their provenance but never refused; a host label that marks the prompt non-human refuses every use.
-PROTECTED_USES = frozenset({"native_approval", "task_create_implementation", "task_assign", "task_contract",
+PROTECTED_USES = frozenset({"global_post", "native_approval", "task_create_implementation", "task_assign", "task_contract",
                             "task_cancel_or_reopen", "note_admin", "knowledge_admin", "message_retry"})
 UNPROTECTED_USES = frozenset({"account", "auto_void", "task_create_analysis"})
 MAX_MESSAGE_ID_BYTES = 64
@@ -425,6 +425,12 @@ class Store:
             db.execute("UPDATE prompts SET accounted=? WHERE id=?",
                        (dumps({"disposition": disposition, "refs": refs}), prompt_id))
         return {}
+
+    def authorize_global_post(self, actor, prompt_id):
+        """A machine-wide announcement needs the gateway and an admin prompt the host confirms as human."""
+        self.main_only(actor)
+        with self.tx() as db:
+            self.source(db, prompt_id, "global_post")
 
     def auto_void_peer_receipts(self, session):
         """Close, as void, this session's open receipts that the host transcript now labels non-human.

@@ -201,7 +201,7 @@ class PromptProvenanceTests(EvidenceFixture, unittest.TestCase):
 
     # The protected uses.
     def test_every_protected_use_refuses_a_receipt_that_is_not_confirmed_human(self):
-        self.assertEqual(PROTECTED_USES, {"native_approval", "task_create_implementation", "task_assign", "task_contract",
+        self.assertEqual(PROTECTED_USES, {"global_post", "native_approval", "task_create_implementation", "task_assign", "task_contract",
                                           "task_cancel_or_reopen", "note_admin", "knowledge_admin", "message_retry"})
         self.write(filler())
         self.submit("Please do the work", path=None)
@@ -227,6 +227,7 @@ class PromptProvenanceTests(EvidenceFixture, unittest.TestCase):
                 self.refused("knowledge_admin", lambda: Knowledge(self.store).write("CLAUDE_01", dict(
                     title="Admin preference", body="Use small steps", basis="admin", source=receipt, evidence=["admin prompt"])), label)
                 self.refused("message_retry", lambda: self.use_source(receipt, "message_retry"), label)
+                self.refused("global_post", lambda: self.store.authorize_global_post("CLAUDE_01", receipt), label)
                 self.refused("native_approval", lambda: self.respond(receipt), label)
                 self.assertEqual(self.current(existing), before)
                 self.assertEqual(len(self.store.status()["tasks"]), task_count)
@@ -327,13 +328,26 @@ class PromptProvenanceTests(EvidenceFixture, unittest.TestCase):
         self.assertNotIn(peer_receipt, open_ids)
         self.assertEqual(self.events("prompt.consumed", human_receipt), [])  # Checking a human receipt consumes nothing.
 
+    def test_the_gateway_prompt_hook_mentions_unread_agents_space_entries(self):
+        from ihav_agent_room.globalspace import GlobalSpace
+        with tempfile.TemporaryDirectory(prefix="ihav home ") as home, patch.dict(os.environ, {"IHAV_HOME": home}):
+            space = GlobalSpace()
+            other = Path(home) / "other"
+            other.mkdir()
+            space.register(self.store.room()["id"], self.project, "0.5.0")
+            space.register("room-other", other, "0.5.0")
+            space.post("announcement", "Counter JSON v2 lands Monday", "details", origin="room-other")
+            self.write(filler() + [user_row("status please")])
+            self.assertIn('Agents space: 1 unread entry (first: announcement "Counter JSON v2 lands Monday")',
+                          self.submit("status please"))
+
     def test_the_documented_labels_are_the_ones_the_call_sites_pass(self):
         code = "\n".join(path.read_text() for path in (Path(__file__).resolve().parents[1] / "ihav_agent_room").glob("*.py"))
         everything = PROTECTED_USES | UNPROTECTED_USES
         calls = [line for line in code.splitlines() if ".source(" in line and "def source" not in line]
         used = {word for line in calls for word in re.findall(r'"([a-z_]+)"', line)} & everything
         self.assertEqual(used, everything)
-        self.assertEqual(len(calls), 10)  # account, auto_void, create_task, update_task x2, notes x2, knowledge, retry, approval.
+        self.assertEqual(len(calls), 11)  # account, auto_void, global_post, create_task, update_task x2, notes x2, knowledge, retry, approval.
 
     def test_unknown_use_is_rejected_without_recording_receipt_consumption(self):
         prompt = "Use labels are closed"

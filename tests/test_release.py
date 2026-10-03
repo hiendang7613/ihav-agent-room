@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 from ihav_agent_room import __version__
 from ihav_agent_room.common import GATEWAY, RoomError
+from ihav_agent_room.globalspace import GlobalSpace
 from ihav_agent_room.release import activate, active_release, inspect_root, pointer_path
 from ihav_agent_room.runtime import Supervisor
 from ihav_agent_room.scaffold import initialize
@@ -130,6 +131,10 @@ class LauncherTests(ReleaseFixture, unittest.TestCase):
                 result = subprocess.run([sys.executable, str(SOURCE / "bin" / "ihav-agent-room"), "--json", "activate", "--root", str(new)],
                                         env=dict(self.env, IHAV_AGENT_ROOM_MEMBER=member), capture_output=True, text=True, timeout=60)
                 self.assertEqual(result.returncode == 0, ok, result.stdout + result.stderr)
+                if ok:  # Every room learns about it through the machine agents space.
+                    entry = json.loads(result.stdout)["data"]["announced"]
+                    ledger = GlobalSpace(self.home / ".ihav" / "agents_space")
+                    self.assertEqual(ledger.show(entry)["subject"], "ihav-agent-room 9.1.0 is active")
 
 
 class SupervisorUpgradeTests(ReleaseFixture, unittest.TestCase):

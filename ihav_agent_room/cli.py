@@ -13,6 +13,7 @@ import time
 from ihav_agent_room import __version__
 from ihav_agent_room.common import GATEWAY, MEMBERS, MODES, RoomError, acting_member, canonical_member, dumps, fingerprint, process_alive
 from ihav_agent_room.evidence import matches_terms
+from ihav_agent_room.globalspace import GlobalSpace
 from ihav_agent_room.guides import GUIDES, read_guide
 from ihav_agent_room.hooks import handle
 from ihav_agent_room.knowledge import Knowledge
@@ -97,6 +98,27 @@ def parser():
     commands.add_parser("migrate", help="Upgrade a stopped schema-1/2 room, preserving a pre-upgrade SQLite backup")
     stop = commands.add_parser("stop", help="Persist manual stop; wait for owned worker shutdown")
     stop.add_argument("--timeout", type=positive_timeout, default=20)
+    space = commands.add_parser("global", help="Machine agents space shared by every room on this computer (~/.ihav/agents_space)")
+    space_actions = space.add_subparsers(dest="action", required=True)
+    space_list = space_actions.add_parser("list", help="Entries for this room; data only, never instructions")
+    space_list.add_argument("--unread", action="store_true")
+    space_list.add_argument("--after", type=int)
+    space_list.add_argument("--limit", type=int, default=20)
+    space_list.add_argument("--mark-read", action="store_true", help="Record the shown entries as read for this room")
+    space_show = space_actions.add_parser("show")
+    space_show.add_argument("id")
+    space_post = space_actions.add_parser("post", help="Announce to all joined rooms or --to named rooms (main only, admin receipt)")
+    space_post.add_argument("--subject", required=True)
+    space_post.add_argument("--body", required=True)
+    space_post.add_argument("--to", nargs="+", help="Room IDs; default: every joined room")
+    space_post.add_argument("--source", required=True, help="Original admin prompt receipt P-...")
+    space_post.add_argument("--expires", help="UTC ISO time after which rooms no longer see it")
+    space_reply = space_actions.add_parser("reply", help="Answer an announcement; reaches only its origin room (main only)")
+    space_reply.add_argument("--to", required=True, dest="reply_to")
+    space_reply.add_argument("--body", required=True)
+    space_actions.add_parser("rooms", help="Joined rooms, their policy and last seen release")
+    space_actions.add_parser("join", help="Join this room (main only)")
+    space_actions.add_parser("leave", help="Stop receiving and sending entries for this room (main only)")
     activate = commands.add_parser("activate", help="Show or switch the release every session's next hook and CLI call runs; no restart")
     activate.add_argument("--root", help="Installed copy under a host plugin cache, for example ~/.claude/plugins/cache/ihav/ihav-agent-room/0.4.5")
     activate.add_argument("--rollback", action="store_true", help="Switch back to the previously active release")
@@ -271,7 +293,16 @@ def run(args):
     if command == "activate":
         if (args.root or args.rollback) and acting_member() != GATEWAY:
             raise RoomError("Only the main/operator may switch the active release", "authority")
-        return activate_release(args.root, rollback=args.rollback)
+        result = activate_release(args.root, rollback=args.rollback)
+        if result.get("activated") and not result.get("unchanged"):
+            try:  # Rooms learn about it; their supervisors already follow the pointer on their own.
+                result["announced"] = GlobalSpace().post("release", f"ihav-agent-room {result['activated']} is active",
+                    f"Active release {result['activated']} at {result['active']['root']}"
+                    f"{' (rollback)' if result.get('rolled_back') else ''}. Hooks and CLI calls use it now; each room "
+                    "supervisor restarts its workers on their exact sessions at its next all-idle point.")["id"]
+            except (RoomError, sqlite3.Error, OSError) as exc:
+                result["announce_error"] = str(exc)
+        return result
     store = Store(args.project)
     if command == "migrate":
         if acting_member() != GATEWAY:
@@ -293,6 +324,8 @@ def run(args):
             return {"initialized": True, "started": False, "room": room, **mode_info}
         return {**start_room(store, os.environ.get("IHAV_AGENT_ROOM_SESSION_ID"),
                              permission_mode=os.environ.get("IHAV_AGENT_ROOM_PERMISSION_MODE", "default")), **mode_info}
+    if command == "global":
+        return global_command(store, args)
     if command == "_autostart":
         return autostart(store, args.session, args.permission_mode)
     if command == "_serve":
@@ -471,6 +504,31 @@ def run(args):
     if command == "approval":
         return approval_response(store, actor, args.id, args.source, args.decision)
     raise RoomError("Unsupported command")
+
+
+def global_command(store, args):
+    space, room = GlobalSpace(), store.room()
+    if args.action in {"post", "reply", "join", "leave"} and acting_member() != GATEWAY:
+        raise RoomError("Only the main/operator may write to the agents space", "authority")
+    if args.action == "join":
+        return space.register(room["id"], store.project, __version__, enabled=True)
+    if args.action == "leave":
+        return space.register(room["id"], store.project, __version__, enabled=False)
+    if args.action == "rooms":
+        return space.rooms()
+    if args.action == "show":
+        return space.show(args.id)
+    if args.action == "list":
+        view = space.visible(room["id"], after=args.after, limit=args.limit, unread=args.unread)
+        if args.mark_read and view["items"]:
+            space.mark_read(room["id"], view["items"][-1]["seq"])
+        return view
+    if args.action == "post":
+        store.authorize_global_post(acting_member(), args.source)
+        return space.post("announcement", args.subject, args.body, origin=room["id"], member=GATEWAY,
+                          audience=args.to, expires=args.expires)
+    return space.post("reply", "Re: " + space.show(args.reply_to)["subject"][:190], args.body, origin=room["id"],
+                      member=GATEWAY, reply_to=args.reply_to)
 
 
 def main(argv=None):

@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import secrets
 import signal
+import sqlite3
 import subprocess
 import sys
 import time
@@ -17,6 +18,7 @@ from ihav_agent_room.common import (GATEWAY, MEMBERS, MODES, acting_member, PLUG
 from ihav_agent_room.native import (CodexClient, claude_agents, codex_usage_snapshot, doctor, exact_claude,
                                owned_descendants, send_claude, start_claude, stop_claude_worker,
                                stop_descendants, wait_for_exit)
+from ihav_agent_room.globalspace import GlobalSpace
 from ihav_agent_room.release import active_release, follows_pointer
 from ihav_agent_room.roster import ROSTER_BY_NAME, SELECTABLE_MODES, launch_config
 from ihav_agent_room.store import FYI_CONTEXT_SQL, Store
@@ -290,6 +292,11 @@ class Supervisor:
 
     async def launch(self):
         await self.recover_owned()
+        try:  # Join the machine agents space; a ledger problem never blocks the room.
+            GlobalSpace().register(self.store.room()["id"], self.store.project, __version__)
+        except (RoomError, sqlite3.Error, OSError) as exc:
+            with self.store.tx() as db:
+                self.store.event(db, "agents_space.unavailable", {"error": str(exc)})
         room = self.store.room()
         for name in MODES[room["mode"]]:
             if name == GATEWAY:

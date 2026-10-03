@@ -9,7 +9,7 @@
       "name": "ihav-agent-room",
       "source": "./",
       "description": "Native Claude Code + Codex rooms",
-      "version": "0.4.8"
+      "version": "0.5.0"
     },
     {
       "name": "ihav-asd-ste100",
