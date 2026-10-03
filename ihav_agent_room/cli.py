@@ -140,12 +140,16 @@ def parser():
     accept_basis.add_argument("--source", help="This room's admin receipt P-... approving the work")
     accept_basis.add_argument("--self-accept", nargs="+", metavar="ATTEST",
                               help="Standing policy: read_named_files_only no_paid_cost one_turn")
+    accept.add_argument("--revision", type=int, help="Revision you read; refused if the contract changed")
     for name, needs in (("decline", "--reason"), ("reject", "--reason"), ("deliver", "--result")):
         action = contract_actions.add_parser(name)
         action.add_argument("id")
         action.add_argument(needs, required=True, dest="note")
+        action.add_argument("--revision", type=int, required=name == "reject", help="Revision you read")
     for name in ("start", "confirm", "withdraw"):
-        contract_actions.add_parser(name).add_argument("id")
+        action = contract_actions.add_parser(name)
+        action.add_argument("id")
+        action.add_argument("--revision", type=int, required=name == "confirm", help="Revision you read")
     activate = commands.add_parser("activate", help="Show or switch the release every session's next hook and CLI call runs; no restart")
     activate.add_argument("--root", help="Installed copy under a host plugin cache, for example ~/.claude/plugins/cache/ihav/ihav-agent-room/0.4.5")
     activate.add_argument("--rollback", action="store_true", help="Switch back to the previously active release")
@@ -574,7 +578,8 @@ def contract_command(store, args):
     if args.action == "accept" and args.source:
         store.authorize_contract_accept(acting_member(), args.source)
     return contracts.act(room, args.id, args.action, note=getattr(args, "note", None),
-                         source=getattr(args, "source", None), attest=getattr(args, "self_accept", None))
+                         source=getattr(args, "source", None), attest=getattr(args, "self_accept", None),
+                         expected_revision=getattr(args, "revision", None))
 
 
 def main(argv=None):

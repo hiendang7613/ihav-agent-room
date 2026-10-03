@@ -50,9 +50,10 @@ class ContractTests(unittest.TestCase):
                          ("accepted", "standing_policy", "D-a6d8d8f6"))
         self.contracts.act("room-counter", contract["id"], "deliver", note="defer: no change to the chain yet")
         self.assertIn("1 waiting", self.contracts.waiting_summary("room-competitor-search"))
-        done = self.contracts.act("room-competitor-search", contract["id"], "confirm")
+        done = self.contracts.act("room-competitor-search", contract["id"], "confirm", expected_revision=3)
         self.assertEqual((done["state"], done["closed"]), ("confirmed", True))
-        self.assertEqual([e["action"] for e in done["history"]], ["propose", "accept", "deliver", "confirm"])
+        self.assertEqual([(e["action"], e["revision"]) for e in done["history"]],
+                         [("propose", 1), ("accept", 2), ("deliver", 3), ("confirm", 4)])
         self.assertEqual(self.contracts.listing("room-counter"), [])
 
     def test_code_changes_and_larger_reads_need_the_provider_admin(self):
@@ -88,15 +89,51 @@ class ContractTests(unittest.TestCase):
         self.contracts.act("room-counter", contract["id"], "accept", attest=ATTEST)
         self.contracts.act("room-counter", contract["id"], "deliver", note="first try")
         with self.assertRaises(RoomError):
-            self.contracts.act("room-competitor-search", contract["id"], "reject")  # A reason is required.
-        self.contracts.act("room-competitor-search", contract["id"], "reject", note="no reasons given")
+            self.contracts.act("room-competitor-search", contract["id"], "reject", expected_revision=3)  # Reason needed.
+        self.contracts.act("room-competitor-search", contract["id"], "reject", note="no reasons given", expected_revision=3)
+        with self.assertRaises(RoomError) as caught:  # Self-accept covered one turn only.
+            self.contracts.act("room-counter", contract["id"], "deliver", note="second try")
+        self.assertEqual(caught.exception.code, "authority")
+        with self.assertRaises(RoomError):
+            self.contracts.act("room-counter", contract["id"], "accept", attest=ATTEST)
+        self.contracts.act("room-counter", contract["id"], "accept", source="P-provider-admin")
         self.contracts.act("room-counter", contract["id"], "deliver", note="defer, because the chain is unchanged")
-        self.assertEqual(self.contracts.act("room-competitor-search", contract["id"], "confirm")["state"], "confirmed")
+        self.assertEqual(self.contracts.act("room-competitor-search", contract["id"], "confirm", expected_revision=6)["state"],
+                         "confirmed")
         with self.assertRaises(RoomError):
             self.contracts.act("room-competitor-search", contract["id"], "withdraw")
 
+    def test_a_decision_about_an_older_delivery_never_lands_on_a_newer_one(self):
+        """Review M-f9271da2 finding 2: confirm/reject name the revision they judged."""
+        contract = self.survey(kind="analysis", files=[])
+        self.contracts.act("room-counter", contract["id"], "accept", source="P-provider-admin")
+        first = self.contracts.act("room-counter", contract["id"], "deliver", note="first answer")
+        self.contracts.act("room-competitor-search", contract["id"], "reject", note="incomplete", expected_revision=first["revision"])
+        self.contracts.act("room-counter", contract["id"], "deliver", note="second answer")
+        for action, note in (("confirm", None), ("reject", "late reason")):
+            with self.subTest(action=action), self.assertRaises(RoomError) as caught:
+                self.contracts.act("room-competitor-search", contract["id"], action, note=note, expected_revision=first["revision"])
+            self.assertEqual(caught.exception.code, "conflict")
+        with self.assertRaises(RoomError):
+            self.contracts.act("room-competitor-search", contract["id"], "confirm")  # No revision named.
+
+    def test_description_only_rooms_cannot_leak_through_reasons(self):
+        """Review M-f9271da2 finding 1: every outgoing text field follows the sending room's policy."""
+        to_private = self.survey(provider="room-private", kind="analysis", files=[])
+        with self.assertRaises(RoomError) as caught:
+            self.contracts.act("room-private", to_private["id"], "decline", note="Evidence /client/secrets.txt token=example")
+        self.assertEqual(caught.exception.code, "policy")
+        self.assertEqual(self.contracts.act("room-private", to_private["id"], "decline", note="Not our area")["state"], "declined")
+        from_private = self.survey(requester="room-private", files=[], title="Retest", request="Output changed", acceptance="parses")
+        self.contracts.act("room-counter", from_private["id"], "accept", attest=ATTEST)
+        delivered = self.contracts.act("room-counter", from_private["id"], "deliver", note="It parses")
+        with self.assertRaises(RoomError):
+            self.contracts.act("room-private", from_private["id"], "reject", note="see ~/client/log.txt", expected_revision=delivered["revision"])
+        history = json.dumps(self.contracts.show(from_private["id"]))
+        self.assertNotIn("client/log", history)
+
     def test_inputs_and_privacy(self):
-        for files in (["/etc/passwd"], ["../x"], ["a\\b"]):
+        for files in (["/etc/passwd"], ["../x"], ["a\\b"], ["."]):
             with self.subTest(files=files), self.assertRaises(RoomError):
                 self.survey(files=files)
         with self.assertRaises(RoomError):

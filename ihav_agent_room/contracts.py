@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS contract_events (seq INTEGER PRIMARY KEY AUTOINCREMEN
 """
 # action: (who may act, states it may start from, resulting state)
 TRANSITIONS = {
-    "accept": ("provider", {"proposed"}, "accepted"),
+    "accept": ("provider", {"proposed", "rejected"}, "accepted"),  # From rejected only to renew authority.
     "decline": ("provider", {"proposed"}, "declined"),
     "start": ("provider", {"accepted", "rejected"}, "in_progress"),
     "deliver": ("provider", {"accepted", "in_progress", "rejected"}, "delivered"),
@@ -80,7 +80,7 @@ class Contracts:
         clean = []
         for item in files or []:
             path = PurePosixPath(item)
-            if path.is_absolute() or ".." in path.parts or not item.strip() or "\\" in item:
+            if path.is_absolute() or ".." in path.parts or not item.strip() or "\\" in item or str(path) in {".", ""}:
                 raise RoomError(f"Contract files are paths relative to the requester project: {item!r}", "invalid")
             clean.append(str(path))
         if len(clean) > MAX_FILES:
@@ -133,7 +133,11 @@ class Contracts:
             return None
 
     def act(self, room, contract_id, action, *, note=None, source=None, attest=None, expected_revision=None):
-        """Apply one transition for `room`. `source` is a provider-admin receipt already checked by the caller."""
+        """Apply one transition for `room`. `source` is a provider-admin receipt already checked by the caller.
+
+        Every transition raises `revision` by one. confirm and reject must name the revision the requester judged,
+        so a decision about an older delivery can never land on a newer one.
+        """
         if action not in TRANSITIONS:
             raise RoomError("Unknown contract action", "invalid")
         side, allowed, target = TRANSITIONS[action]
@@ -148,23 +152,30 @@ class Contracts:
             self._room(db, room)
             if row["state"] not in allowed:
                 raise RoomError(f"Cannot {action} a contract that is {row['state']}", "conflict")
+            if action in {"confirm", "reject"} and expected_revision is None:
+                raise RoomError(f"Name the revision you judged (--revision {row['revision']})", "invalid")
             if expected_revision is not None and expected_revision != row["revision"]:
                 raise RoomError(f"Contract changed (revision {row['revision']}); read it again", "conflict")
-            changes, data = {"state": target, "updated": now()}, {}
+            authority = json.loads(row["authority"]) if row["authority"] else {}
+            if action == "accept" and row["state"] == "rejected" and not source:
+                raise RoomError("Renewing a rejected contract needs the provider admin's receipt", "authority")
+            if row["state"] == "rejected" and action in {"start", "deliver"} and authority.get("basis") == "standing_policy":
+                raise RoomError("Self-accept covered one turn; accept again with the provider admin's receipt", "authority")
+            changes, data = {"state": target, "updated": now(), "revision": row["revision"] + 1}, {}
+            text = None
             if action in {"decline", "reject"}:
-                changes["reason"] = data["reason"] = self._text(note, "reason")
+                text = changes["reason"] = data["reason"] = self._text(note, "reason")
             if action == "deliver":
-                text = self._text(note, "result")
-                if db.execute("SELECT policy FROM rooms WHERE room_id=?", (room,)).fetchone()[0] == "descriptions_only" \
-                        and NOT_A_DESCRIPTION.search(text):
-                    raise RoomError("This room sends descriptions only: no file paths, URLs or key/value secrets", "policy")
-                changes["result"] = data["result"] = text
+                text = changes["result"] = data["result"] = self._text(note, "result")
+            if text is not None and NOT_A_DESCRIPTION.search(text) and \
+                    db.execute("SELECT policy FROM rooms WHERE room_id=?", (room,)).fetchone()[0] == "descriptions_only":
+                raise RoomError("This room sends descriptions only: no file paths, URLs or key/value secrets", "policy")
             if action == "accept":
                 changes["authority"] = json.dumps(self._acceptance(row, source, attest))
                 data["authority"] = json.loads(changes["authority"])
             assignments = ", ".join(f"{key}=?" for key in changes)
             db.execute(f"UPDATE contracts SET {assignments} WHERE id=?", (*changes.values(), contract_id))
-            self._event(db, contract_id, row["revision"], room, action, target, data)
+            self._event(db, contract_id, changes["revision"], room, action, target, data)
             db.execute("COMMIT")
             return self.show(contract_id, db=db)
         except BaseException:
