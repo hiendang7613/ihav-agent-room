@@ -1,6 +1,6 @@
 {
   "name": "ihav-agent-room",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "Persistent Claude Code and Codex rooms with shared tasks, peer messaging and native session recovery.",
   "author": {
     "name": "Vulcan Labs"
@@ -12,8 +12,7 @@
   ],
   "dependencies": [
     {
-      "name": "ihav-asd-ste100",
-      "marketplace": "ihav-agent-room-marketplace"
+      "name": "ihav-asd-ste100"
     }
   ]
 }
