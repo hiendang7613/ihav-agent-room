@@ -313,6 +313,12 @@ class Store:
         if use not in PROTECTED_USES | UNPROTECTED_USES:
             raise RoomError("Unknown receipt use", "invalid")
         row = db.execute("SELECT body,origin FROM prompts WHERE id=?", (prompt_id,)).fetchone() if prompt_id else None
+        if row and use in {"account", "auto_void"} and row["origin"] == "hook" and native_event_prompt(row["body"]):
+            # Older hooks made receipts for native envelopes (cross-session messages before 0.4.4). Bookkeeping closes
+            # them as void; they still never authorize anything (reported by ihav-competitor-search 2026-10-04).
+            provenance = {"state": "non_human", "kind": "native_envelope", "reason": "body is a native event envelope"}
+            Store.event(db, "prompt.voided", {"receipt": prompt_id, "use": use} | provenance)
+            return provenance | {"void": True}
         if not row or row["origin"] == "peer" or native_event_prompt(row["body"]):
             raise RoomError("An original admin prompt ID is required", "authority")
         # The host transcript row exists by now, so the hook-time offset is enough to find it again.

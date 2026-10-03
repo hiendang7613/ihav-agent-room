@@ -1,5 +1,5 @@
 """Native Claude Code / Codex room coordination. No model execution loop."""
 
-__version__ = "0.6.2"
+__version__ = "0.6.3"
 # bin/ihav-agent-room runs only releases that declare the same launcher protocol.
 LAUNCHER_PROTOCOL = 1
