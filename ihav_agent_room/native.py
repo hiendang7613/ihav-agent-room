@@ -101,8 +101,10 @@ def exact_claude(project, native_id):
         return [agent for agent in claude_agents(project, scoped=scoped)
                 if agent.get("sessionId") == native_id and
                 Path(agent.get("cwd", "/nonexistent")).resolve() == Path(project).resolve()]
-    matches = matching(True) or matching(False)
-    if len(matches) != 1 or not process_stamp(matches[0].get("pid")):
+    # The registry can keep a dead background entry beside the live interactive one for the same session ID
+    # (seen 2026-10-04 after `claude --resume`); only entries with a live process count.
+    matches = [agent for agent in (matching(True) or matching(False)) if process_stamp(agent.get("pid"))]
+    if len(matches) != 1:
         raise RoomError("Exact Claude session is not live in this project", "unavailable")
     return matches[0]
 
@@ -449,10 +451,11 @@ async def start_claude(project, native_id, resume, env, log, member=LAUNCHED_CLA
                 scoped = False  # The --cwd filter may hide it; identity and cwd are still matched here.
                 continue
             reported.update(agent["sessionId"] for agent in matches if agent.get("sessionId"))
-            if len(matches) == 1 and process_stamp(matches[0].get("pid")):
-                found = matches[0]["sessionId"]
+            live = [agent for agent in matches if process_stamp(agent.get("pid"))]  # Ignore dead duplicate entries.
+            if len(live) == 1:
+                found = live[0]["sessionId"]
                 if (resume and found == native_id) or (not resume and found not in previous):
-                    return matches[0]
+                    return live[0]
                 break
             if time.monotonic() >= deadline:
                 break

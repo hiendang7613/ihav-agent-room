@@ -72,6 +72,24 @@ class SessionDiscoveryTests(unittest.TestCase):
             self.assertRegex(str(caught.exception), r"did not become live within 1\.\d s")
 
 
+class DuplicateRegistryEntryTests(unittest.TestCase):
+    """2026-10-04: after `claude --resume`, the registry listed a dead background entry and the live interactive
+    entry for the same session, and rebinding the counter room failed with "not live"."""
+
+    def test_only_the_live_entry_counts(self):
+        from ihav_agent_room.native import exact_claude
+        with tempfile.TemporaryDirectory(prefix="duplicate ") as directory:
+            project = Path(directory)
+            dead = {"sessionId": SESSION, "cwd": str(project), "pid": None, "kind": "background"}
+            live = {"sessionId": SESSION, "cwd": str(project), "pid": 4242, "kind": "interactive"}
+            with patch("ihav_agent_room.native.claude_agents", return_value=[dead, live]), \
+                    patch("ihav_agent_room.native.process_stamp", side_effect=lambda pid: "stamp" if pid == 4242 else None):
+                self.assertEqual(exact_claude(project, SESSION)["pid"], 4242)
+            with patch("ihav_agent_room.native.claude_agents", return_value=[dead, dict(live, pid=4343), live]), \
+                    patch("ihav_agent_room.native.process_stamp", return_value="stamp"), self.assertRaises(RoomError):
+                exact_claude(project, SESSION)  # Two live entries stay ambiguous.
+
+
 class NativeLaunchTests(unittest.TestCase):
     def test_claude_model_and_effort_are_set_only_on_fresh_worker_launches(self):
         with tempfile.TemporaryDirectory(prefix="native model config ") as directory:
