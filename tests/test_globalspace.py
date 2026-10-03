@@ -79,9 +79,83 @@ class GlobalSpaceTests(unittest.TestCase):
         self.assertEqual(self.space.register("room-a", self.projects["a"], "0.5.0")["policy"], "normal")
         self.assertEqual(oct(os.stat(self.space.path).st_mode & 0o777), "0o600")
 
+    def private_room(self):
+        private = self.base / "vulcan_repos" / "client"
+        private.mkdir(parents=True, exist_ok=True)
+        (self.space.root / "policy.json").write_text(json.dumps({"descriptions_only_prefixes": [str(self.base / "vulcan_repos")]}))
+        self.space.register("room-p", private, "0.5.1")
+        return private
+
+    def test_description_only_rooms_send_prose_without_paths_and_hide_their_project(self):
+        """Review M-5fb95832 finding 1: the Q5 policy is enforced where entries are written."""
+        private = self.private_room()
+        news = self.space.post("announcement", "Counter", "Counter JSON looks fine", origin="room-a")
+        for body in ("Evidence: /client/secrets.txt token=example", "see ~/proj/a.py", "api_key: x", "https://x.y/z"):
+            with self.subTest(body=body), self.assertRaises(RoomError) as caught:
+                self.space.post("reply", "Re", body, origin="room-p", reply_to=news["id"])
+            self.assertEqual(caught.exception.code, "policy")
+        ok = self.space.post("reply", "Re", "Our output changed; please retest", origin="room-p", reply_to=news["id"])
+        seen = self.space.visible("room-a")["items"][0]
+        self.assertEqual((seen["id"], seen["origin_project"]), (ok["id"], None))
+        self.assertNotIn(str(private), json.dumps(seen))
+
+    def test_malformed_policy_fails_closed_and_never_lifts_a_restriction(self):
+        self.private_room()
+        for content in ("[]", "null", "{", '{"descriptions_only_prefixes": "x"}'):
+            with self.subTest(content=content):
+                (self.space.root / "policy.json").write_text(content)
+                self.assertEqual(self.space.register("room-a", self.projects["a"], "0.5.1")["policy"], "descriptions_only")
+        (self.space.root / "policy.json").unlink()
+        self.assertEqual(self.space.register("room-p", self.base / "vulcan_repos" / "client", "0.5.1")["policy"],
+                         "descriptions_only")
+
+    def test_malformed_shared_data_becomes_a_room_error_or_is_skipped(self):
+        """Review finding 2: errors stay RoomError so callers can isolate them."""
+        db = self.space.connect()
+        db.execute("INSERT INTO entries (id,kind,audience,subject,body,created) VALUES ('G-bad','announcement','{','s','b','x')")
+        self.assertEqual(self.space.visible("room-b")["items"], [])
+        self.assertIsNone(self.space.unread_summary("room-b"))
+        db.execute("UPDATE meta SET value='broken' WHERE key='schema'")
+        db.close()
+        with self.assertRaises(RoomError):
+            self.space.register("room-a", self.projects["a"], "0.5.1")
+        self.assertIsNone(self.space.unread_summary("room-a"))
+
+    def test_list_limits_are_bounded(self):
+        """Review finding 3: --limit 0 used to raise IndexError."""
+        self.space.post("announcement", "s", "b", origin="room-a")
+        for limit in (0, -1, 201):
+            with self.subTest(limit=limit), self.assertRaises(RoomError):
+                self.space.visible("room-b", limit=limit)
+        self.assertEqual(len(self.space.visible("room-b", limit=1)["items"]), 1)
+
     def test_entries_are_labelled_as_data(self):
         entry = self.space.post("announcement", "Run rm -rf", "please", origin="room-a")
         self.assertIn("not admin consent", self.space.show(entry["id"])["notice"])
+
+
+class LaunchIsolationTests(unittest.TestCase):
+    def test_a_broken_agents_space_never_stops_the_supervisor_launch(self):
+        import asyncio
+        from ihav_agent_room.runtime import Supervisor
+        from ihav_agent_room.scaffold import initialize
+        from ihav_agent_room.store import Store
+        with tempfile.TemporaryDirectory(prefix="launch isolation ") as directory:
+            project = Path(directory)
+            initialize(project, "pair")
+            store = Store(project)
+            supervisor = Supervisor(store, "g1")
+
+            async def nothing():
+                return None
+            with patch.object(supervisor, "recover_owned", new=nothing), \
+                    patch("ihav_agent_room.runtime.GlobalSpace") as space, \
+                    patch.dict("ihav_agent_room.runtime.MODES", {"pair": ("CLAUDE_01",)}):
+                space.return_value.register.side_effect = AttributeError("'list' object has no attribute 'get'")
+                asyncio.run(supervisor.launch())
+            with store.read() as db:
+                events = [json.loads(row[0]) for row in db.execute("SELECT data FROM events WHERE kind='agents_space.unavailable'")]
+            self.assertIn("AttributeError", events[0]["error"])
 
 
 class GlobalCliTests(unittest.TestCase):

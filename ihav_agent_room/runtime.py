@@ -294,9 +294,9 @@ class Supervisor:
         await self.recover_owned()
         try:  # Join the machine agents space; a ledger problem never blocks the room.
             GlobalSpace().register(self.store.room()["id"], self.store.project, __version__)
-        except (RoomError, sqlite3.Error, OSError) as exc:
-            with self.store.tx() as db:
-                self.store.event(db, "agents_space.unavailable", {"error": str(exc)})
+        except (RoomError, sqlite3.Error, OSError, ValueError, TypeError, AttributeError, KeyError) as exc:
+            with self.store.tx() as db:  # Malformed shared data must never stop local workers from launching.
+                self.store.event(db, "agents_space.unavailable", {"error": f"{type(exc).__name__}: {exc}"})
         room = self.store.room()
         for name in MODES[room["mode"]]:
             if name == GATEWAY:
