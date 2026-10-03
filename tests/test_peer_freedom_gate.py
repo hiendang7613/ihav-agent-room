@@ -42,7 +42,7 @@ class PeerFreedomGateTests(EvidenceFixture, unittest.TestCase):
                 self.assertIn(clause, role_instructions("CLAUDE_EXPERT"))
 
     def test_admin_reply_shape_is_the_admin_chosen_one_and_preserves_evidence(self):
-        """The admin chose the reply shape on 2026-10-02/03 (i-have-asd-ste100 0.11.0: three zones, eight sections)."""
+        """The admin chose the reply shape on 2026-10-02/03 (ihav-asd-ste100 0.11.0: three zones, eight sections)."""
         for clause in ("**Agents-Zone** (timed steps)", "**Result-Zone**", "**Admin-Zone**",
                        "key-first bullets", "bold Conclusion", "all eight",
                        "0. Done 1. InProgress 2. Pending 3. Questions 4. Todos 5. Backlog 6. Risks 7. AIIdeas",

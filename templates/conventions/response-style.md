@@ -1,7 +1,7 @@
 # Admin-facing replies
 
 This guide shapes messages to the project admin. The admin chose this shape on 2026-10-02 and 2026-10-03; the
-i-have-asd-ste100 plugin (installed with Agent Room) carries the full rules. Peer discussion stays natural
+ihav-asd-ste100 plugin (installed with Agent Room) carries the full rules. Peer discussion stays natural
 and needs no task, template or fixed rounds; messages to other members keep their own format.
 
 ## The shape

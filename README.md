@@ -10,7 +10,7 @@
   <img alt="Version 0.4.0" src="https://img.shields.io/badge/version-0.4.0-4F46E5">
   <img alt="Claude Code and Codex" src="https://img.shields.io/badge/members-Claude%20Code%20%2B%20Codex-0F172A">
   <img alt="Offline tests" src="https://img.shields.io/badge/offline%20tests-364-16A34A">
-  <a href="https://github.com/hiendang7613/i-have-asd-ste100"><img alt="Reports by i-have-asd-ste100" src="https://img.shields.io/badge/reports-i--have--asd--ste100-F59E0B"></a>
+  <a href="https://github.com/hiendang7613/ihav-asd-ste100"><img alt="Reports by ihav-asd-ste100" src="https://img.shields.io/badge/reports-ihav--asd--ste100-F59E0B"></a>
 </p>
 
 <p align="center">
@@ -55,7 +55,7 @@ codex plugin marketplace add hiendang7613/ihav-agent-room
 codex plugin add ihav-agent-room@ihav-agent-room-marketplace
 ```
 
-Installing Agent Room in Claude Code also installs [i-have-asd-ste100](https://github.com/hiendang7613/i-have-asd-ste100), which shapes the reports you read.
+Installing Agent Room in Claude Code also installs [ihav-asd-ste100](https://github.com/hiendang7613/ihav-asd-ste100), which shapes the reports you read.
 Restart Claude Code afterwards.
 
 <a name="start"></a>
@@ -97,7 +97,7 @@ You never write JSON, look up record IDs or route messages. The gateway handles 
 
 ## Readable reports
 
-Agent Room installs [i-have-asd-ste100](https://github.com/hiendang7613/i-have-asd-ste100), so every report from the room has the same shape:
+Agent Room installs [ihav-asd-ste100](https://github.com/hiendang7613/ihav-asd-ste100), so every report from the room has the same shape:
 three labelled zones: the agent's timed steps, key-first bullets, then a one-sentence conclusion and eight fixed sections. A report looks like this:
 
 **Agents-Zone**
@@ -162,7 +162,7 @@ Details: [collaboration guide](templates/conventions/collaboration.md), [learnin
 
 ## Related
 
-- [i-have-asd-ste100](https://github.com/hiendang7613/i-have-asd-ste100): short, predictable replies from Claude Code and Codex, in any language. Installed with Agent Room.
+- [ihav-asd-ste100](https://github.com/hiendang7613/ihav-asd-ste100): short, predictable replies from Claude Code and Codex, in any language. Installed with Agent Room.
 
 ## License
 

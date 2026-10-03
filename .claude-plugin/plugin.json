@@ -12,7 +12,7 @@
   ],
   "dependencies": [
     {
-      "name": "i-have-asd-ste100",
+      "name": "ihav-asd-ste100",
       "marketplace": "ihav-agent-room-marketplace"
     }
   ]

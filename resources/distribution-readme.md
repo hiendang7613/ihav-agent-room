@@ -9,7 +9,7 @@ gives the four-member room, and `/ihav-agent-room:effort` sets member effort. 0.
 and admin relays) per dispatch pass, so neither class starves the other. 0.3.23 gave each member its own allowance
 and the three-zone admin reply shape. 0.3.22 sent queued messages to different
 members concurrently (each member's inbox stays in order). 0.3.21 added the admin's eight-section reply shape and installs
-i-have-asd-ste100 with Agent Room in Claude Code. Since 0.3.20 it also flags failed/unknown inbox deliveries,
+ihav-asd-ste100 with Agent Room in Claude Code. Since 0.3.20 it also flags failed/unknown inbox deliveries,
 names the room reply channel, preserves resume guidance and skips duplicate fresh-start guidance.
 Reserved peer envelopes are a defensive classification guard, not proof of human authorship.
 Offline checks are distinct from native model acceptance and comparative performance;

@@ -58,5 +58,5 @@
 <text x="742" y="716" class="m" xml:space="preserve"><tspan fill="#6B7280">   - </tspan><tspan fill="#E5E7EB" font-weight="700">R1.</tspan><tspan fill="#E5E7EB"> old token library.</tspan></text>
 <text x="742" y="741" class="m" xml:space="preserve"><tspan fill="#6B7280">     - </tspan><tspan fill="#7DD3FC">&lt;a&gt;</tspan><tspan fill="#E5E7EB"> update | (b) skip</tspan></text>
 <text x="742" y="766" class="m" xml:space="preserve"><tspan fill="#6B7280">7. </tspan><tspan fill="#A5B4FC" font-weight="700">AIIdeas:</tspan></text>
-<text x="940" y="880" text-anchor="middle" class="s" fill="#6B7280">Reports use the i-have-asd-ste100 shape (installed with Agent Room).</text>
+<text x="940" y="880" text-anchor="middle" class="s" fill="#6B7280">Reports use the ihav-asd-ste100 shape (installed with Agent Room).</text>
 </svg>
