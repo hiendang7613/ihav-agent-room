@@ -35,6 +35,8 @@ class RoomError(Exception):
 PEER_WRAPPERS = ("Another Claude session sent a message:\n",
                  "Another Claude session sent a message while you were working:\n",
                  "A peer session sent a message while you were working:\n")
+# Claude Code hands UserPromptSubmit the bare envelope of a cross-session message, without the wrapper line.
+CROSS_SESSION_ENVELOPE = "<cross-session-message "
 PEER_WRAPPER_SUFFIXES = ("\n\nThis came from another Claude session", "\n\nIMPORTANT: This is NOT from your user",
                          "\n\nThis is from another Claude session")
 ROOM_EVENT_KINDS = ("peer event", "peer broadcast", "admin relay", "admin notice", "system event")
@@ -64,7 +66,7 @@ def native_event_prompt(body):
     """Known native event envelopes also reach Claude's UserPromptSubmit hook."""
     text = body.lstrip()
     return (native_event_identity(text) is not None or
-            text.startswith((*ROOM_EVENT_PREFIXES, "<task-notification>", *PEER_WRAPPERS)))
+            text.startswith((*ROOM_EVENT_PREFIXES, "<task-notification>", CROSS_SESSION_ENVELOPE, *PEER_WRAPPERS)))
 
 
 def strip_peer_wrapper(text):

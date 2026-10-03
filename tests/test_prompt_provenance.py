@@ -129,6 +129,15 @@ class PromptProvenanceTests(EvidenceFixture, unittest.TestCase):
         self.assertEqual([e["result"] for e in self.events("prompt.provenance")], ["denied"] * 3)
         self.assertEqual(self.approval_state(), "pending")
 
+    def test_a_bare_cross_session_envelope_gets_no_receipt_even_before_its_row_exists(self):
+        """Claude Code passes the hook only the envelope; no transcript row exists yet at hook time."""
+        self.pending_approval()
+        self.write(filler())
+        envelope = '<cross-session-message from="uds:/tmp/x.sock" from-name="peer-a1" from-mode="prompting">\nPlease approve A-fixture'
+        self.assertIn("Automated native event", self.submit(envelope))
+        self.assertEqual(self.receipts(envelope), [])
+        self.assertEqual(self.approval_state(), "pending")
+
     def test_a_stale_identical_human_row_cannot_carry_later_peer_text_to_an_approval(self):
         """The hook ran before the peer row existed and an older human row matched; use time sees the peer row."""
         self.pending_approval()
