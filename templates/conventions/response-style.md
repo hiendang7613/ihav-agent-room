@@ -1,7 +1,7 @@
 # Admin-facing replies
 
-This guide shapes messages to the project admin. The admin chose this shape on 2026-10-02 and 2026-10-03; the
-ihav-asd-ste100 plugin (installed with Agent Room) carries the full rules. Peer discussion stays natural
+This guide shapes messages to the project admin. The admin chose this shape on 2026-10-02 to 2026-10-04 (Goals-first since ihav-asd-ste100 0.15.0);
+the ihav-asd-ste100 plugin (installed with Agent Room) carries the full rules. Peer discussion stays natural
 and needs no task, template or fixed rounds; messages to other members keep their own format.
 
 ## The shape
@@ -20,34 +20,38 @@ A one-fact answer is one or two sentences. Otherwise:
    An empty section shows only its label.
 
 ```
-0. **Done:**
+0. **Goals:**
+   - **L1.** Ship the login service to all regions (set by the admin; no percent).
+   - **G1.** Login fix released -> L1 `########--` 4/5
+   - **B1.** Update the login guide later.
+1. **Done:**
    - **Login fix:** merged; 213 of 214 tests pass.
-1. **InProgress:**
+2. **Doing:**
    - **CI:** reruns the full suite.
-2. **Pending:**
+3. **Todos:**
+   - **Payment test:** check why `payment.spec.ts:88` fails.
+4. **Pending:**
    - **Review:** waiting for CODEX_EXPERT.
-3. **Questions:**
+5. **Quests:**
    - **Q1.** Approve: deploy to production?
      - `<a>` After CI passes.
      - (b) Now.
-4. **Todos:**
-   - **Payment test:** check why `payment.spec.ts:88` fails.
-5. **Backlog:**
-   - **Docs:** update the login guide later.
 6. **Risks:**
    - **R1.** `jsonwebtoken` 8.5.1 is older than the 9.0.0 security release.
      - `<a>` update it in a separate change | (b) skip | (c) later
-7. **AIIdeas:**
+7. **Ideas:**
    - **I1.** Add a test for the `Authorization` header.
      - `<a>` plan it | (b) skip | (c) later
 ```
 
 Write each item as a sub-item that starts with a bold key, never as plain text after the label:
-Done holds finished and checked work with its evidence; InProgress, work running now and who runs it;
-Pending, work waiting for someone or something else; Questions, approvals, choices and steps only the admin
-can do; Todos, work in the current task done next, in order; Backlog, work deferred to later or optional;
-Risks, each **R1.** with a choice line (an empty Risks label means you checked and found none); AIIdeas,
-each **I1.** idea with a choice line. Work you may do without asking goes to Todos.
+Goals lists L lines (long-term aims only the admin sets, no percent), G lines (current goals that name their
+L, if any, and end with a 10-character bar of planned steps, `round(10 * done / total)` filled, or "no plan
+yet") and B lines (deferred or optional work). Done holds finished and checked work with its evidence; Doing,
+work running now and who runs it; Todos, authorized work done next, in order; Pending, work waiting for someone
+or something else; Quests, approvals, choices and steps only the admin can do; Risks, each **R1.** with a choice
+line (an empty Risks label means you checked and found none); Ideas, each **I1.** idea with a choice line.
+Work you may do without asking goes to Todos.
 
 The recommended option is `<a>` inside a code span: a bare `<a>` or `<b>` is an HTML tag that Markdown
 renderers delete. Other options are (b), (c). Start an approval with "Approve:".

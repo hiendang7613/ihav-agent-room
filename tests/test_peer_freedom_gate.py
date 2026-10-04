@@ -45,7 +45,7 @@ class PeerFreedomGateTests(EvidenceFixture, unittest.TestCase):
         """The admin chose the reply shape on 2026-10-02/03 (ihav-asd-ste100 0.11.0: three zones, eight sections)."""
         for clause in ("**Agents-Zone** (timed steps)", "**Result-Zone**", "**Admin-Zone**",
                        "key-first bullets", "bold Conclusion", "all eight",
-                       "0. Done 1. InProgress 2. Pending 3. Questions 4. Todos 5. Backlog 6. Risks 7. AIIdeas",
+                       "0. Goals 1. Done 2. Doing 3. Todos 4. Pending 5. Quests 6. Risks 7. Ideas",
                        "Preserve facts, conditions, uncertainty, authority and evidence"):
             with self.subTest(clause=clause):
                 self.assertIn(clause, COLLABORATION_GUIDANCE)
