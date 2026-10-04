@@ -53,7 +53,7 @@ or something else; Quests, approvals, choices and steps only the admin can do; R
 line (an empty Risks label means you checked and found none); Ideas, each **I1.** idea with a choice line.
 Work you may do without asking goes to Todos.
 Number Q, R and I from 1 in every reply, so Q1.a means the latest reply; L, G and B IDs stay stable.
-Typing "az" or "adminzone" returns the Admin-Zone alone. A reply that has a Quest always ends with the Admin-Zone. Goals always has an L line; with none set, propose one in Quests. A finished aim stays at 100%.
+Typing "az" or "adminzone" returns the Admin-Zone alone. A reply that has a Quest always ends with the Admin-Zone. Goals always has an L line; with none set, propose an L in Quests as plain text, with no percent or bar. A finished aim stays at 100%.
 
 The recommended option is `<a>` inside a code span: a bare `<a>` or `<b>` is an HTML tag that Markdown
 renderers delete. Other options are (b), (c). Start an approval with "Approve:".
