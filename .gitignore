@@ -5,6 +5,7 @@
 !/LICENSE
 !/README.md
 !/.claude-plugin/
+!/.codex-plugin/
 !/ihav_agent_room/
 !/bin/
 !/hooks/

@@ -18,6 +18,7 @@ from ihav_agent_room.common import (GATEWAY, MEMBERS, MODES, acting_member, PLUG
 from ihav_agent_room.native import (CodexClient, claude_agents, codex_usage_snapshot, doctor, exact_claude,
                                owned_descendants, send_claude, start_claude, stop_claude_worker,
                                stop_descendants, wait_for_exit)
+from ihav_agent_room.catalogwatch import check_catalogs
 from ihav_agent_room.globalspace import GlobalSpace
 from ihav_agent_room.release import active_release, follows_pointer
 from ihav_agent_room.roster import ROSTER_BY_NAME, SELECTABLE_MODES, launch_config
@@ -236,6 +237,7 @@ class Supervisor:
         self.recovered = False
         self.last_registry_check = 0
         self.next_release_check = 0
+        self.next_catalog_check = 0
 
     def worker_env(self, name):
         binding = secrets.token_hex(24)
@@ -562,6 +564,17 @@ class Supervisor:
             self.store.put_room(db, room)
             self.store.event(db, "room.upgrade", {"from": __version__, "to": target["version"], "root": target["root"]})
 
+    async def watch_catalogs(self):
+        """Ask the shared ledger whether this supervisor should look at plugin catalogs now (plan N-ac8dc5ab)."""
+        if time.monotonic() < self.next_catalog_check:
+            return
+        self.next_catalog_check = time.monotonic() + 60
+        try:
+            await asyncio.to_thread(check_catalogs)
+        except (RoomError, sqlite3.Error, OSError, ValueError, TypeError, KeyError) as exc:
+            with self.store.tx() as db:  # Catalog news is optional; it never disturbs the room.
+                self.store.event(db, "agents_space.catalog_check_failed", {"error": f"{type(exc).__name__}: {exc}"})
+
     def finish_mode_restart(self):
         """Only observed idle native workers permit cleanup; waiting/failed/unknown is not completion."""
         with self.store.tx() as db:
@@ -631,6 +644,7 @@ class Supervisor:
                     await self.native_events()
                     await self.approvals()
                     self.request_upgrade()
+                    await self.watch_catalogs()
                     await self.refresh_claude(force=bool(self.store.room().get("mode_transition")))
                     if self.finish_mode_restart():
                         break

@@ -1,0 +1,27 @@
+{
+  "name": "ihav-agent-room",
+  "version": "0.7.0",
+  "description": "Native Claude Code + Codex agent rooms with shared tasks, peer messaging, reviews, a machine agents space and cross-room contracts.",
+  "author": {
+    "name": "hiendang7613"
+  },
+  "license": "MIT",
+  "keywords": ["agents", "codex", "coordination"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "ihav-agent-room",
+    "shortDescription": "Persistent Claude Code and Codex rooms that coordinate on one project",
+    "longDescription": "Run a room of Claude Code and Codex members on one project with shared tasks, reviews and peer messages, native session recovery, a machine-wide agents space for announcements, and contracts between rooms. The room is started from Claude Code; Codex members run as app-server workers.",
+    "developerName": "hiendang7613",
+    "category": "Productivity",
+    "capabilities": ["Instructions"],
+    "defaultPrompt": [
+      "Show the ihav-agent-room status for this project.",
+      "List the agents space entries for this room.",
+      "List the contracts waiting on this room."
+    ],
+    "websiteURL": "https://github.com/hiendang7613/ihav-agent-room"
+  },
+  "homepage": "https://github.com/hiendang7613/ihav-agent-room",
+  "repository": "https://github.com/hiendang7613/ihav-agent-room"
+}

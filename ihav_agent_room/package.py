@@ -12,7 +12,7 @@ from ihav_agent_room.common import PLUGIN_ROOT, RoomError, dumps
 from ihav_agent_room.guides import GUIDES
 
 
-PATTERNS = ("ihav_agent_room/*.py", "bin/ihav-agent-room", ".claude-plugin/*.json", "hooks/*.json",
+PATTERNS = ("ihav_agent_room/*.py", "bin/ihav-agent-room", ".claude-plugin/*.json", ".codex-plugin/*.json", "hooks/*.json",
             "resources/*.md", "skills/*/SKILL.md", "templates/**/*.md", "docs/v1.1.md")
 
 
@@ -33,7 +33,9 @@ def build(output, source=PLUGIN_ROOT):
         raise RoomError("Missing required package files", "package", missing=sorted(required - selected.keys()))
     plugin = json.loads(selected[".claude-plugin/plugin.json"])
     marketplace = json.loads(selected[".claude-plugin/marketplace.json"])
-    if plugin["version"] != __version__ or marketplace["plugins"][0]["version"] != __version__:
+    codex = json.loads(selected.get(".codex-plugin/plugin.json", b"{}"))
+    if plugin["version"] != __version__ or marketplace["plugins"][0]["version"] != __version__ or \
+            codex.get("version", __version__) != __version__:
         raise RoomError("Package, plugin and marketplace versions disagree", "package")
     selected["README.md"] = selected["resources/distribution-readme.md"]
     manifest = {"version": __version__, "files_sha256": {name: hashlib.sha256(data).hexdigest() for name, data in sorted(selected.items())}}
