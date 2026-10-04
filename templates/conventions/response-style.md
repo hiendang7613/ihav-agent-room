@@ -52,6 +52,7 @@ work running now and who runs it; Todos, authorized work done next, in order; Pe
 or something else; Quests, approvals, choices and steps only the admin can do; Risks, each **R1.** with a choice
 line (an empty Risks label means you checked and found none); Ideas, each **I1.** idea with a choice line.
 Work you may do without asking goes to Todos.
+Number Q, R and I from 1 in every reply, so Q1.a means the latest reply; L, G and B IDs stay stable.
 
 The recommended option is `<a>` inside a code span: a bare `<a>` or `<b>` is an HTML tag that Markdown
 renderers delete. Other options are (b), (c). Start an approval with "Approve:".
