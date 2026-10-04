@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import shlex
 
+from ihav_agent_room import __version__
 from ihav_agent_room.common import (GATEWAY, MEMBERS, RoomError, acting_member, native_event_prompt,
                                native_peer_event, native_prompt_delivery, now)
 from ihav_agent_room.contracts import Contracts
@@ -102,6 +103,12 @@ def handle(payload):
         return {}
     room = store.room()
     is_owner = (room.get("owner") or {}).get("session") == session
+    if is_owner and not worker and event in {"UserPromptSubmit", "Stop"}:
+        try:  # Heartbeat: the supervisor warns when the conversation moves on but these hooks no longer run.
+            store.member(GATEWAY, {"hook_seen": now(), "hook_version": __version__,
+                                   "transcript": payload.get("transcript_path") or None})
+        except RoomError:
+            pass
     if event == "UserPromptSubmit":
         prompt = payload.get("prompt", "")
         peer = native_peer_event(prompt)

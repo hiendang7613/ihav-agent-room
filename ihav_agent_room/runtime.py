@@ -1,6 +1,7 @@
 """One process supervisor per room, native workers, durable dispatch receipts."""
 
 import asyncio
+from datetime import datetime
 import hashlib
 import json
 import os
@@ -238,6 +239,7 @@ class Supervisor:
         self.last_registry_check = 0
         self.next_release_check = 0
         self.next_catalog_check = 0
+        self.next_hook_check = 0
 
     def worker_env(self, name):
         binding = secrets.token_hex(24)
@@ -564,6 +566,33 @@ class Supervisor:
             self.store.put_room(db, room)
             self.store.event(db, "room.upgrade", {"from": __version__, "to": target["version"], "root": target["root"]})
 
+    def check_hook_silence(self, now_ts=None, quiet=600):
+        """Warn the admin once when the owner's conversation keeps moving but its hooks have stopped.
+
+        Seen 2026-10-04: removing an old plugin silently stopped hooks in open sessions, so prompts got no receipts
+        and the gateway could not create tasks. The warning arrives as a room notice, which needs no hook.
+        """
+        now_ts = now_ts if now_ts is not None else time.time()
+        if now_ts < self.next_hook_check:
+            return False
+        self.next_hook_check = now_ts + 300
+        member = self.store.member(GATEWAY)
+        transcript, seen = member.get("transcript"), member.get("hook_seen")
+        if not transcript or not seen or member.get("hook_silence_warned") == seen:
+            return False
+        try:
+            moved = Path(transcript).stat().st_mtime
+            last = datetime.fromisoformat(seen).timestamp()
+        except (OSError, ValueError, TypeError):
+            return False
+        if moved - last < quiet:
+            return False
+        self.store.member(GATEWAY, {"hook_silence_warned": seen})
+        self.store.notice(GATEWAY, GATEWAY, f"This conversation has continued since {seen}, but the room's hooks have not run "
+                          "since then, so prompts get no receipts. Type /reload-plugins once in this session; "
+                          "if hooks still stay silent, start a new session in this project.")
+        return True
+
     async def watch_catalogs(self):
         """Ask the shared ledger whether this supervisor should look at plugin catalogs now (plan N-ac8dc5ab)."""
         if time.monotonic() < self.next_catalog_check:
@@ -645,6 +674,7 @@ class Supervisor:
                     await self.approvals()
                     self.request_upgrade()
                     await self.watch_catalogs()
+                    self.check_hook_silence()
                     await self.refresh_claude(force=bool(self.store.room().get("mode_transition")))
                     if self.finish_mode_restart():
                         break
