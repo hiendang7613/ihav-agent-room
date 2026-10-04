@@ -9,8 +9,8 @@ and needs no task, template or fixed rounds; messages to other members keep thei
 A one-fact answer is one or two sentences. Otherwise:
 
 1. Three zones, each under a bold label line with a blank line before it:
-   - `**Agents-Zone**`: every step this turn, one line per tool call or parallel batch:
-     `` - `4:43 PM` why => what ``. The time comes only from a real clock (Claude Code's hook supplies it);
+   - `**Agents-Zone**`: every step this turn, one short line (about 12 words) per tool call or parallel batch:
+     `` - `4:43 PM` why => what ``, keeping only the result or the proving ID. The time comes only from a real clock (Claude Code's hook supplies it);
      without one, leave it out. No steps means the label only.
    - `**Result-Zone**`: a short body of key-first bullets; each line starts with a bold word or a `path`.
    - `**Admin-Zone**`: the closing part below.
@@ -21,8 +21,8 @@ A one-fact answer is one or two sentences. Otherwise:
 
 ```
 0. **Goals:**
-   - **L1.** Ship the login service to all regions (set by the admin; no percent).
-   - **G1.** Login fix released -> L1 `########--` 4/5
+   - **L1.** [~80%] [########--] | Ship the login service to all regions (set by the admin).
+   - **G1.** Login fix released.
    - **B1.** Update the login guide later.
 1. **Done:**
    - **Login fix:** merged; 213 of 214 tests pass.
@@ -45,9 +45,9 @@ A one-fact answer is one or two sentences. Otherwise:
 ```
 
 Write each item as a sub-item that starts with a bold key, never as plain text after the label:
-Goals lists L lines (long-term aims only the admin sets, no percent), G lines (current goals that name their
-L, if any, and end with a 10-character bar of planned steps, `round(10 * done / total)` filled, or "no plan
-yet") and B lines (deferred or optional work). Done holds finished and checked work with its evidence; Doing,
+Goals lists L lines (long-term aims only the admin sets, written `**L1.** [~80%] [########--] | aim`: "~" marks the
+percent as an estimate, one # per 10 percent; square brackets are allowed only there), then plain G lines (current
+goals) and B lines (deferred or optional work), with no bar, percent or link. Done holds finished and checked work with its evidence; Doing,
 work running now and who runs it; Todos, authorized work done next, in order; Pending, work waiting for someone
 or something else; Quests, approvals, choices and steps only the admin can do; Risks, each **R1.** with a choice
 line (an empty Risks label means you checked and found none); Ideas, each **I1.** idea with a choice line.
@@ -60,7 +60,7 @@ renderers delete. Other options are (b), (c). Start an approval with "Approve:".
 ## Keep it easy to read
 
 Use the admin's language. Prefer familiar words, concrete verbs and one idea per sentence. Explain an
-uncommon term once. Use no emoji, no square brackets and no headings in a normal reply, and never wrap
+uncommon term once. Use no emoji, no square brackets (except in L progress) and no headings in a normal reply, and never wrap
 the reply in a code block. Exact-output requests (only code, JSON or one command) get exactly that.
 
 Preserve exact code, commands, paths, IDs, numbers, units, error text, negations, conditions, authority,
