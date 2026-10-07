@@ -7,9 +7,9 @@
 
 <p align="center">
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-4F46E5"></a>
-  <img alt="Local candidate 0.8.8" src="https://img.shields.io/badge/local_candidate-0.8.8-4F46E5">
+  <img alt="Version 0.8.9" src="https://img.shields.io/badge/version-0.8.9-4F46E5">
   <img alt="Claude Code and Codex" src="https://img.shields.io/badge/members-Claude%20Code%20%2B%20Codex-0F172A">
-  <img alt="Offline regression suite: 685 passed, 1 xfailed" src="https://img.shields.io/badge/offline%20tests-685_passed%20%2F%201_xfailed-64748B">
+  <img alt="Offline regression suite: 753 passed, 1 xfailed" src="https://img.shields.io/badge/offline%20tests-753_passed%20%2F%201_xfailed-64748B">
   <a href="https://github.com/hiendang7613/ihav-asd-ste100"><img alt="Reports by ihav-asd-ste100" src="https://img.shields.io/badge/reports-ihav--asd--ste100-F59E0B"></a>
 </p>
 
@@ -63,8 +63,8 @@ Restart Claude Code afterwards.
 
 ## Start a room
 
-This checkout contains the **local 0.8.8 candidate**. The Codex gateway below is not yet
-published or activated by these source changes; marketplace installation uses the published release.
+This checkout contains **version 0.8.9**. Marketplace installation uses the latest published
+release, which can be older than this checkout.
 
 Open your project in Codex and use the single entry command:
 
@@ -266,7 +266,7 @@ Details: [collaboration guide](templates/conventions/collaboration.md), [learnin
 
 ## Honest status
 
-- The 0.8.8 offline suite passed 685 tests, with 1 xfailed test. Fixture-based native checks do not establish new-session recovery or live worker readiness.
+- The 0.8.9 offline suite passed 753 tests, with 1 xfailed test (macOS, Python 3.11). Fixture-based native checks do not establish new-session recovery or live worker readiness.
 - The model and effort settings have not been checked against real providers, and nothing here measures tokens or cost yet.
 - No benchmark yet shows that Agent Room is faster, cheaper or better than other multi-agent tools.
 
