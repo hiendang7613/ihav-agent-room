@@ -9,6 +9,8 @@ from ihav_agent_room.common import GATEWAY, RoomError, dumps, file_lock, now, pr
 
 VERSION = 3
 HOST_SCHEMA = 4  # Same ledger tables, new gateway ownership semantics. Older runtimes must refuse these rooms.
+LEGACY_WORKER_SESSION_SCHEMA = 5  # First local journal prototype; current readers preserve it during upgrade.
+WORKER_SESSION_SCHEMA = 6  # Same tables; readers must enforce launch intent and replacement native identity.
 EXTENSIONS = """
 CREATE TABLE submissions (id TEXT PRIMARY KEY, task TEXT NOT NULL REFERENCES tasks(id), data TEXT NOT NULL);
 CREATE TABLE reviews (id TEXT PRIMARY KEY, submission TEXT NOT NULL REFERENCES submissions(id), data TEXT NOT NULL);
@@ -63,7 +65,7 @@ def migrate(store):
             room = json.loads(db.execute("SELECT value FROM meta WHERE key='room'").fetchone()[0])
             if room["project"] != str(store.project):
                 raise RoomError("Room belongs to another project", "conflict")
-            if room["schema"] in {VERSION, HOST_SCHEMA}:
+            if room["schema"] in {VERSION, HOST_SCHEMA, LEGACY_WORKER_SESSION_SCHEMA, WORKER_SESSION_SCHEMA}:
                 return {"migrated": False, "schema": room["schema"]}
             previous_schema = room["schema"]
             if previous_schema not in {1, 2}:

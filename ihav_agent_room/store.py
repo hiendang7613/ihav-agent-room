@@ -14,7 +14,8 @@ from ihav_agent_room.evidence import bounded, capture, digest, matches_terms, no
 from ihav_agent_room.provenance import assess_chain
 from ihav_agent_room.prompt_frame import frame_for_prompt, load_frame
 from ihav_agent_room.roster import EFFORT_LEVELS, ROSTER_BY_NAME, mode_settings, room_gateway
-from ihav_agent_room.schema import EXTENSIONS, HOST_SCHEMA, KNOWLEDGE_SCHEMA, VERSION
+from ihav_agent_room.schema import (EXTENSIONS, HOST_SCHEMA, KNOWLEDGE_SCHEMA, VERSION,
+                                   LEGACY_WORKER_SESSION_SCHEMA, WORKER_SESSION_SCHEMA)
 
 
 SCHEMA = """
@@ -261,7 +262,7 @@ class Store:
     @staticmethod
     def get_room(db):
         room = json.loads(db.execute("SELECT value FROM meta WHERE key='room'").fetchone()[0])
-        if room["schema"] not in {VERSION, HOST_SCHEMA}:
+        if room["schema"] not in {VERSION, HOST_SCHEMA, LEGACY_WORKER_SESSION_SCHEMA, WORKER_SESSION_SCHEMA}:
             raise RoomError("Unsupported room schema. Stop with the compatible plugin, then run ihav-agent-room migrate for schema 1 or 2.", "incompatible")
         return room
 
@@ -305,6 +306,21 @@ class Store:
                 member = json.loads(db.execute("SELECT data FROM members WHERE name=?", (name,)).fetchone()[0])
                 token = os.environ.get("IHAV_AGENT_ROOM_BINDING", "")
                 if token and member.get("token_hash") == hashlib.sha256(token.encode()).hexdigest():
+                    if member.get("session_replacement"):
+                        # Native exact resume reloads a shared settings file. A
+                        # retired job might obtain its new token, but never its
+                        # new UUID. The initial fresh hook can bind only while
+                        # this generation's explicit allocation is pending.
+                        records = [item for item in room.get("worker_session_history", [])
+                                   if item["id"] == member["session_replacement"] and item["member"] == name]
+                        retired = {item["retired_session"] for item in room.get("worker_session_history", [])}
+                        native_matches = (bool(session) and session not in retired and len(records) == 1
+                                          and (member.get("native_id") == session or
+                                               member.get("native_id") is None and member["status"] == "starting"
+                                               and records[0]["state"] == "launching"
+                                               and records[0]["launch_generation"] == room["generation"]))
+                        if not native_matches:
+                            raise RoomError("Replacement worker native identity does not match its current binding", "identity")
                     if name in MODES[room["mode"]] and room["status"] in {"starting", "running", "stopping"}:
                         return name
         raise RoomError("This process is not bound to an active room member", "identity")

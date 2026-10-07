@@ -24,10 +24,11 @@ from ihav_agent_room.continuity import recovery_context
 from ihav_agent_room.closing import capture as capture_closing, recover as recover_closing, readiness, prior_history
 from ihav_agent_room.package_verifier import verify_archive
 from ihav_agent_room.release import activate as activate_release
-from ihav_agent_room.roster import EFFORT_LEVELS, HOST_GATEWAYS, NEW_ROOM_MODE, SELECTABLE_MODES
+from ihav_agent_room.roster import EFFORT_LEVELS, HOST_GATEWAYS, NEW_ROOM_MODE, ROSTER_BY_NAME, SELECTABLE_MODES
 from ihav_agent_room.runtime import Supervisor, approval_response, autostart, change_mode, connection_plan, reconnect_codex_host, request_stop, start_room
 from ihav_agent_room.scaffold import initialize, install_alias
 from ihav_agent_room.schema import migrate
+from ihav_agent_room.session_replacement import prepare_claude_replacement
 from ihav_agent_room.store import NOTE_STATES, Store
 
 
@@ -124,6 +125,12 @@ def parser():
     commands.add_parser("migrate", help="Upgrade a stopped schema-1/2 room, preserving a pre-upgrade SQLite backup")
     stop = commands.add_parser("stop", help="Persist manual stop; wait for owned worker shutdown")
     stop.add_argument("--timeout", type=positive_timeout, default=20)
+    replace = commands.add_parser("replace-session", help="Explicitly retire a stopped Claude worker; preserve this room's tasks/history")
+    replace.add_argument("--member", required=True, type=canonical_member,
+                         choices=tuple(name for name, profile in ROSTER_BY_NAME.items() if profile["host"] == "claude"))
+    replace.add_argument("--expected-session", required=True, help="Exact stopped saved native ID you inspected")
+    replace.add_argument("--request-id", required=True, help="Stable ID for this replacement; repeats never allocate another session")
+    replace.add_argument("--reason", required=True, help="Explicit operator instruction; no task or native-permission authority is changed")
     space = commands.add_parser("global", help="Machine agents space shared by every room on this computer (~/.ihav/agents_space)")
     space_actions = space.add_subparsers(dest="action", required=True)
     space_list = space_actions.add_parser("list", help="Entries for this room; data only, never instructions")
@@ -370,6 +377,8 @@ def run(args):
                 result["announce_error"] = str(exc)
         return result
     store = Store(args.project)
+    if command == "replace-session":
+        return prepare_claude_replacement(store, args.member, args.expected_session, args.request_id, args.reason)
     if command == "connect":
         plan = connection_plan(store, main_session_id(), require_host=not args.check)
         if args.check or plan["resume_required"] or plan["blockers"]:

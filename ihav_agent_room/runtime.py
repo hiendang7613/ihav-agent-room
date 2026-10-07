@@ -27,7 +27,9 @@ from ihav_agent_room.codex_gateway import CodexGateway, probe_codex, probe_detac
 from ihav_agent_room.release import active_release, follows_pointer
 from ihav_agent_room.roster import HOST_GATEWAYS, ROSTER_BY_NAME, SELECTABLE_MODES, launch_config
 from ihav_agent_room.store import FYI_CONTEXT_SQL, Store
-from ihav_agent_room.schema import HOST_SCHEMA, gateway_backup
+from ihav_agent_room.schema import HOST_SCHEMA, WORKER_SESSION_SCHEMA, gateway_backup
+from ihav_agent_room.session_replacement import (begin_replacement_launch, check_replacement_start,
+                                                complete_replacement_launch, fail_replacement_launch)
 
 
 CLAUDE_EXIT_ERROR = "Native background session exited. Stop/start to resume it."
@@ -120,10 +122,16 @@ def bind_main(store, session, permission_mode="default", host=None, handoff=Fals
         room["owner"] = owner
         room.setdefault("host_sessions", {})[host] = session
         room["gateway"] = gateway
+        if room.get("worker_session_history") and room["schema"] < WORKER_SESSION_SCHEMA:
+            backup = gateway_backup(store)
+            previous_schema = room["schema"]
+            room.update(schema=WORKER_SESSION_SCHEMA, worker_identity_schema_backup=backup)
+            store.event(db, "room.worker_identity_schema_upgraded", {"from": previous_schema,
+                        "to": WORKER_SESSION_SCHEMA, "backup": backup})
         if host == "codex":
             # Version 0.7.0 and older hardcode a Claude gateway. Their get_room()
             # rejects schema 4, preventing old hooks/CLIs from reassigning our owner.
-            room["schema"] = HOST_SCHEMA
+            room["schema"] = max(room["schema"], HOST_SCHEMA)  # Preserve newer worker lifecycle semantics.
         store.put_room(db, room)
     store.member(gateway, {"native_id": session, "pid": owner["pid"], "stamp": owner["stamp"],
                            "status": "active", "permission_mode": permission_mode, "token_hash": None,
@@ -454,6 +462,7 @@ def recover_exited_pair(store, session, automatic=False, budget=10):
 def start_room(store, session, mode=None, permission_mode="default", automatic=False, handoff=False):
     if acting_member() != HOST_GATEWAYS[main_host()] or os.environ.get("IHAV_AGENT_ROOM_BINDING"):
         raise RoomError("A worker cannot become the room's admin session", "authority")
+    check_replacement_start(store)
     checks = doctor()
     if not checks["ok"]:
         raise RoomError("Native dependencies are not ready; run doctor", "dependency", checks=checks)
@@ -470,6 +479,7 @@ def start_room(store, session, mode=None, permission_mode="default", automatic=F
         return recovery
     recovery_info = {"pair_recovery": recovery} if recovery else {}
     with file_lock(store.runtime / "control.lock"):
+        check_replacement_start(store)  # A concurrent native launch may have failed during dependency checks.
         owner = bind_main(store, session, permission_mode, handoff=handoff)
         with store.tx() as db:
             room = store.get_room(db)
@@ -699,6 +709,7 @@ class Supervisor:
         self.store, self.generation = store, generation
         self.codex = {}
         self.claude = {}
+        self.terminal_upgrade_members = {}
         self.stopping = False
         self.error = None
         self.recovered = False
@@ -814,12 +825,14 @@ class Supervisor:
             else:
                 native_id = member["native_id"]
                 self.claude[name] = native_id
+                replacement = begin_replacement_launch(self.store, name, self.generation)
                 try:
                     native = await start_claude(self.store.project, native_id, bool(member["native_id"]),
                                                env, self.store.runtime / (name + ".log"),
                                                member=name,
                                                model=config["model"], effort=config["effort"])
                 except RoomError as exc:
+                    fail_replacement_launch(self.store, replacement, exc)
                     reported = exc.details.get("reported_new_ids", [])
                     registered = self.store.member(name)
                     observed = registered.get("unexpected_native_id") or (registered["native_id"] if not native_id else None)
@@ -831,12 +844,16 @@ class Supervisor:
                                                  "unexpected_native_id": created_id})
                     raise
                 self.claude[name] = native["sessionId"]
-                self.store.member(name, {"native_id": native["sessionId"], "job_id": native.get("id"),
+                changes = {"native_id": native["sessionId"], "job_id": native.get("id"),
                                          "pid": native["pid"], "stamp": process_stamp(native["pid"]), "status": "idle",
                                          "settings_pending_restart": False,
                                          "settings_application": ("model and effort passed to new Claude session"
                                              if not member["native_id"] else
-                                             "resumed exact session; model and effortLevel requested in its settings file")})
+                                             "resumed exact session; model and effortLevel requested in its settings file")}
+                if replacement:
+                    complete_replacement_launch(self.store, replacement, self.generation, changes)
+                else:
+                    self.store.member(name, changes)
         self.store.wake_resumed_work(self.generation)
         with self.store.tx() as db:
             room = self.store.get_room(db)
@@ -1179,26 +1196,63 @@ class Supervisor:
                 self.store.event(db, "agents_space.catalog_check_failed", {"error": f"{type(exc).__name__}: {exc}"})
 
     def finish_mode_restart(self):
-        """Only observed idle native workers permit cleanup; waiting/failed/unknown is not completion."""
+        """Drain idle workers and confirmed terminal Claude jobs during an upgrade.
+
+        A stopped ledger state alone is insufficient. The preceding forced native
+        refresh must prove terminal exit; identity, process and approvals stay held.
+        This permits owned cleanup, without claiming a task or native result passed.
+        """
+        self.terminal_upgrade_members = {}
         with self.store.tx() as db:
             room = self.store.get_room(db)
             transition = room.get("mode_transition")
-            if not transition or not room.get("restart_requested") or room["generation"] != self.generation:
+            if (not transition or not room.get("restart_requested") or room["generation"] != self.generation
+                    or room.get("manual_stop")):
                 return False
-            waiting = []
+            pending_approvals = any(json.loads(row[0])["state"] in {"pending", "respond", "submitted"}
+                                    for row in db.execute("SELECT data FROM approvals"))
+            waiting, terminal_members = [], {}
             for name in (*self.codex, *self.claude):
                 member = json.loads(db.execute("SELECT data FROM members WHERE name=?", (name,)).fetchone()[0])
-                if member["status"] != "idle" or (name in self.codex and self.codex[name].turn_id):
+                exited_claude = False
+                if (transition.get("reason") == "upgrade" and name in self.claude
+                        and member["status"] == "stopped" and not pending_approvals
+                        and member.get("native_id") == self.claude[name]
+                        and member.get("launch_generation") == self.generation
+                        and not member.get("unexpected_native_id") and not member.get("turn_id")):
+                    observed = member.get("native_observation") or {}
+                    pid = member.get("pid")
+                    valid_pid = type(pid) is int and pid >= 2
+                    exited_claude = (
+                        observed.get("reason") == "native_terminal_observed"
+                        and observed.get("kind") == "background"
+                        and observed.get("state") in {"stopped", "failed", "done"}
+                        and observed.get("status") is None
+                        and (pid is None or valid_pid)
+                        and process_alive(pid, member.get("stamp")) is False
+                        and (pid is None or process_stamp(pid) is None))
+                    if exited_claude:
+                        terminal_members[name] = {key: member.get(key) for key in
+                                                  ("native_id", "launch_generation", "pid", "stamp")}
+                if ((member["status"] != "idle" and not exited_claude)
+                        or (name in self.codex and self.codex[name].turn_id)):
                     waiting.append(name)
             transition["waiting"] = waiting
             if not waiting:
                 transition["state"] = "restarting"
                 room["status"] = "stopping"
+                self.terminal_upgrade_members = terminal_members
             self.store.put_room(db, room)
             return not waiting
 
     async def shutdown(self):
         failures = []
+        terminal_cleanup_error, terminal_cleanup_held = None, False
+        if self.terminal_upgrade_members:
+            try:
+                await self.refresh_claude(force=True)
+            except (OSError, RoomError, subprocess.TimeoutExpired, ValueError, TypeError, KeyError, AttributeError) as exc:
+                terminal_cleanup_error = str(exc)
         if self.gateway_client:
             try:
                 await self.gateway_client.close()
@@ -1211,18 +1265,53 @@ class Supervisor:
             except (OSError, RoomError) as exc:
                 failures.append(f"{name}: {exc}")
         for name, native_id in self.claude.items():
+            admitted = self.terminal_upgrade_members.get(name)
             try:
                 if not native_id:
                     continue  # No launch identity was observed; do not touch another session.
+                if admitted:
+                    # The recorded process has already exited. Never resolve and
+                    # stop this native session again: another controller may own it.
+                    if terminal_cleanup_error:
+                        raise RoomError(terminal_cleanup_error, "cleanup")
+                    with self.store.tx() as db:
+                        room = self.store.get_room(db)
+                        member = json.loads(db.execute("SELECT data FROM members WHERE name=?", (name,)).fetchone()[0])
+                        observed = member.get("native_observation") or {}
+                        pending = any(json.loads(row[0])["state"] in {"pending", "respond", "submitted"}
+                                      for row in db.execute("SELECT data FROM approvals"))
+                        if (room["generation"] != self.generation or pending
+                                or any(member.get(key) != value for key, value in admitted.items())
+                                or member["status"] != "stopped" or member.get("turn_id")
+                                or member.get("unexpected_native_id")
+                                or observed.get("reason") != "native_terminal_observed"
+                                or observed.get("kind") != "background"
+                                or observed.get("state") not in {"stopped", "failed", "done"}
+                                or observed.get("status") is not None
+                                or process_alive(admitted["pid"], admitted["stamp"]) is not False
+                                or (admitted["pid"] is not None and process_stamp(admitted["pid"]) is not None)):
+                            raise RoomError("Saved session, process or approval changed after terminal admission", "cleanup")
+                        db.execute("UPDATE members SET data=? WHERE name=?",
+                                   (dumps(dict(member, status="stopped", pid=None, stamp=None)), name))
+                    continue
                 member = self.store.member(name)
                 await stop_claude_worker(self.store.project, native_id, member)
                 self.store.member(name, {"status": "stopped", "pid": None, "stamp": None})
-            except (OSError, RoomError) as exc:
-                failures.append(f"{name}: {exc}")
+            except (OSError, RoomError, subprocess.TimeoutExpired) as exc:
+                if admitted:
+                    terminal_cleanup_held = True
+                    failures.append(f"{name}: Terminal upgrade cleanup held: {exc}")
+                else:
+                    failures.append(f"{name}: {exc}")
         with self.store.tx() as db:
             room = self.store.get_room(db)
             if room["generation"] == self.generation:
-                for row in db.execute("SELECT id,data FROM approvals").fetchall():
+                if (self.terminal_upgrade_members and not terminal_cleanup_held
+                        and any(json.loads(row[0])["state"] in {"pending", "respond", "submitted"}
+                                for row in db.execute("SELECT data FROM approvals"))):
+                    terminal_cleanup_held = True
+                    failures.append("Terminal upgrade cleanup held: Native approval arrived before shutdown commit")
+                for row in ([] if terminal_cleanup_held else db.execute("SELECT id,data FROM approvals").fetchall()):
                     approval = json.loads(row["data"])
                     if approval["generation"] == self.generation and approval["state"] in {"pending", "respond", "submitted"}:
                         approval.update(state="expired", detail="Native connection closed; no response can be delivered")

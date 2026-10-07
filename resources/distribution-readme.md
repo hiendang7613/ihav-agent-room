@@ -116,6 +116,27 @@ native host requires one. This guidance does not guarantee agent compliance or t
 ```
 
 Status/doctor are read-only. Stop preserves unfinished work; manual stop persists until start.
+
+An explicit operator request can replace a stopped non-gateway Claude session:
+`ihav-agent-room replace-session --member CLAUDE_01 --expected-session UUID --request-id REQUEST --reason REASON`.
+The exact saved gateway must run it after manual stop and terminal native inspection.
+It preserves the room ID, mode, tasks, messages, reviews and checkpoints, records
+the retired session, and saves a consistent pre-change SQLite backup. Normal
+`start` then launches a fresh Claude worker; ordinary recovery still resumes saved
+sessions. Repeat the same request ID to retrieve the existing result. A lost or
+failed launch response stays held for native reconciliation and never triggers a
+second fresh allocation. The operation grants no task or native-permission
+authority and does not replay unknown deliveries. New worker readiness requires
+its own native continuity report; its previous private conversation stays native.
+Replacement raises this room to schema 6 without changing its ledger tables.
+Older runtimes refuse that room rather than ignore pending launch intent. Keep a
+schema-6-compatible runtime active for the room. Changing the global release
+pointer alone does not downgrade or restore its ledger; reactivating this local
+version restores access without replacing saved identities.
+Worker room commands also check the current native UUID. A retired native job
+cannot regain its room binding merely by reloading the current settings token.
+Existing schema-5 journals retain their tasks/history and a pre-upgrade backup
+when the same gateway starts them under this version.
 Start returns bounded final replies from this room's exact former gateways and open-note pointers,
 so the start skill recovers project goals, pending decisions, next actions and backlog as well as
 membership. It reconciles these historical claims with current task/note state and Git; empty active
