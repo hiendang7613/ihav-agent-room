@@ -11,7 +11,7 @@ import sys
 import time
 
 from ihav_agent_room import __version__
-from ihav_agent_room.common import GATEWAY, MEMBERS, MODES, RoomError, acting_member, main_session_id, canonical_member, dumps, fingerprint, process_alive
+from ihav_agent_room.common import GATEWAY, MEMBERS, MODES, RoomError, acting_member, main_host, main_session_id, canonical_member, dumps, fingerprint, process_alive
 from ihav_agent_room.evidence import matches_terms
 from ihav_agent_room.contracts import TYPES as CONTRACT_TYPES, Contracts
 from ihav_agent_room.globalspace import GlobalSpace
@@ -19,10 +19,13 @@ from ihav_agent_room.guides import GUIDES, read_guide
 from ihav_agent_room.hooks import handle
 from ihav_agent_room.knowledge import Knowledge
 from ihav_agent_room.native import doctor
+from ihav_agent_room.codex_gateway import probe_codex
+from ihav_agent_room.continuity import recovery_context
+from ihav_agent_room.closing import capture as capture_closing, recover as recover_closing, readiness, prior_history
 from ihav_agent_room.package_verifier import verify_archive
 from ihav_agent_room.release import activate as activate_release
-from ihav_agent_room.roster import EFFORT_LEVELS, NEW_ROOM_MODE, SELECTABLE_MODES
-from ihav_agent_room.runtime import Supervisor, approval_response, autostart, change_mode, request_stop, start_room
+from ihav_agent_room.roster import EFFORT_LEVELS, HOST_GATEWAYS, NEW_ROOM_MODE, SELECTABLE_MODES
+from ihav_agent_room.runtime import Supervisor, approval_response, autostart, change_mode, connection_plan, reconnect_codex_host, request_stop, start_room
 from ihav_agent_room.scaffold import initialize, install_alias
 from ihav_agent_room.schema import migrate
 from ihav_agent_room.store import NOTE_STATES, Store
@@ -33,6 +36,20 @@ def mode_note(mode):
         return ("New rooms start in pair mode: 2 members, CLAUDE_WORKER and CODEX_WORKER. "
                 "Run /ihav-agent-room:mode advisors for the four-member room.")
     return f"This room runs in {mode} mode with {len(MODES[mode])} members. Run /ihav-agent-room:mode pair or advisors to switch."
+
+
+def working_context(store, full=False):
+    historical = recovery_context(store)
+    state = recover_closing(store, full=full)
+    if state["status"] == "recovered" and not full:
+        # The durable sections already carry the relevant wording; don't inject
+        # four duplicate native replies. Full source text remains retrievable.
+        historical["historical_replies"] = [
+            {key: value for key, value in item.items() if key != "text"}
+            | {"read_command": "ihav-agent-room --json context --full"}
+            for item in historical["historical_replies"]]
+        historical["historical_text_deferred"] = True
+    return historical | {"project_state": state}
 
 
 class RoomParser(argparse.ArgumentParser):
@@ -88,14 +105,22 @@ def parser():
     target.add_argument("--member", help="One member id or alias; default is every room-controlled member")
     target.add_argument("--all", action="store_true", help="Every room-controlled member (the default)")
     effort.add_argument("--clear", action="store_true", help="Drop overrides and use the mode's effort")
-    start = commands.add_parser("start", help="Start/resume the exact native workers")
+    start = commands.add_parser("start", help="Create, reconnect or resume this project's room in one command")
     start.add_argument("--mode", choices=MODES)
+    context = commands.add_parser("context", help="Read source-linked project closing state, drift and former gateway replies")
+    context.add_argument("--full", action="store_true", help="Read complete saved sections when the compact context reports truncation")
+    context.add_argument("--prior-after", type=int, help="Read only a page of archived unresolved sections after this cursor")
+    context.add_argument("--prior-limit", type=int, default=4, help="Prior section page size, 1 to 20 (default: 4)")
+    connect = commands.add_parser("connect", help="Connect this Codex host to an existing room, preserving mode and the saved Codex session")
+    connect.add_argument("--check", action="store_true", help="Read the handoff plan from any shell without binding a gateway or starting workers")
+    connect.add_argument("--handoff", action="store_true", help="Explicitly transfer a stopped, reconciled Claude-hosted room; leave its old host process alive")
     status = commands.add_parser("status", help="Read current state, advisory attention and pending inbox counts; no work is started")
     status.add_argument("--compact", action="store_true", help="Active task summaries and read pointers; preserve full admin prompts, approvals and attention")
     commands.add_parser("wakes", help="Read-only activity proxies per member: queued broadcast counts, message states, dispatch attempts/results and processing ACKs; not proof of a wake/read and no token counts")
     verify = commands.add_parser("verify-package", help="Read-only ZIP manifest integrity check; does not authenticate the publisher or require a room")
     verify.add_argument("archive", type=Path)
-    commands.add_parser("doctor", help="Read-only CLI capability checks; no provider probe or automatic repair")
+    commands.add_parser("doctor", help="Read-only CLI capability checks; no provider probe or automatic repair").add_argument(
+        "--gateway", action="store_true", help="Also probe the current Codex thread and native queue without sending input")
     commands.add_parser("migrate", help="Upgrade a stopped schema-1/2 room, preserving a pre-upgrade SQLite backup")
     stop = commands.add_parser("stop", help="Persist manual stop; wait for owned worker shutdown")
     stop.add_argument("--timeout", type=positive_timeout, default=20)
@@ -153,7 +178,7 @@ def parser():
     activate = commands.add_parser("activate", help="Show or switch the release every session's next hook and CLI call runs; no restart")
     activate.add_argument("--root", help="Installed copy under a host plugin cache, for example ~/.claude/plugins/cache/ihav/ihav-agent-room/0.4.5")
     activate.add_argument("--rollback", action="store_true", help="Switch back to the previously active release")
-    commands.add_parser("hook", help=argparse.SUPPRESS)
+    commands.add_parser("hook", help=argparse.SUPPRESS).add_argument("--host", choices=("claude", "codex"))
     commands.add_parser("install-alias", help="Install the bare personal init slash command; never overwrite another skill")
     auto = commands.add_parser("_autostart", help=argparse.SUPPRESS)
     auto.add_argument("--session", required=True)
@@ -269,7 +294,7 @@ def parser():
     retry.add_argument("id")
     retry.add_argument("--source", required=True)
     retry.add_argument("--reconciled", required=True)
-    intake = commands.add_parser("intake", help="Original admin receipts; semantic classification belongs to CLAUDE_01").add_subparsers(dest="action", required=True)
+    intake = commands.add_parser("intake", help="Original admin receipts; semantic classification belongs to the room gateway").add_subparsers(dest="action", required=True)
     intake.add_parser("list")
     recover = intake.add_parser("recover", help="Main-only recovery of original human text after a failed intake hook")
     recover.add_argument("--body-file", default="-")
@@ -314,15 +339,25 @@ def run(args):
     if command == "guide":
         return read_guide(args.topic)
     if command == "hook":
+        if args.host:
+            os.environ["IHAV_AGENT_ROOM_HOST"] = args.host
         return handle(json.load(sys.stdin))
     if command == "doctor":
-        return doctor()
+        result = doctor()
+        if args.gateway:
+            if main_host() != "codex" or not main_session_id():
+                raise RoomError("Run doctor --gateway from the intended Codex host session", "identity")
+            thread = asyncio.run(probe_codex(args.project, main_session_id()))
+            result["gateway"] = {"host": "codex", "thread": thread["id"], "cwd": thread["cwd"],
+                                 "queue_supported": True, "model_called": False, "input_sent": False}
+        return result
     if command == "install-alias":
         return {"installed": install_alias()}
     if command == "verify-package":
         return verify_archive(args.archive)
     if command == "activate":
-        if (args.root or args.rollback) and acting_member() != GATEWAY:
+        if (args.root or args.rollback) and (
+                acting_member() != HOST_GATEWAYS[main_host()] or os.environ.get("IHAV_AGENT_ROOM_BINDING")):
             raise RoomError("Only the main/operator may switch the active release", "authority")
         result = activate_release(args.root, rollback=args.rollback)
         if result.get("activated") and not result.get("unchanged"):
@@ -335,26 +370,70 @@ def run(args):
                 result["announce_error"] = str(exc)
         return result
     store = Store(args.project)
+    if command == "connect":
+        plan = connection_plan(store, main_session_id(), require_host=not args.check)
+        if args.check or plan["resume_required"] or plan["blockers"]:
+            return {"connected": False, **plan}
+        if plan["handoff_required"] and not args.handoff:
+            return {"connected": False, **plan, "next": {"action": "Run connect --handoff to transfer this stopped room to its saved Codex session"}}
+        result = start_room(store, main_session_id(),
+                            permission_mode=os.environ.get("IHAV_AGENT_ROOM_PERMISSION_MODE", "default"), handoff=args.handoff)
+        return {"connected": True, "saved_codex_session": store.member(HOST_GATEWAYS["codex"])["native_id"],
+                "gateway": store.gateway, "mode": store.room()["mode"], **result}
     if command == "migrate":
-        if acting_member() != GATEWAY:
+        if acting_member() != HOST_GATEWAYS[main_host()] or os.environ.get("IHAV_AGENT_ROOM_BINDING"):
             raise RoomError("Only the main/operator may migrate an offline room", "authority")
         return migrate(store)
-    if command == "init":
-        if acting_member() != GATEWAY:
-            raise RoomError("Only the admin's main session can initialize a room", "authority")
-        if not args.no_start:
+    if command in {"init", "start"}:
+        if acting_member() != HOST_GATEWAYS[main_host()] or os.environ.get("IHAV_AGENT_ROOM_BINDING"):
+            raise RoomError("Only the admin's main session can start or initialize a room", "authority")
+        no_start = getattr(args, "no_start", False)
+        recovery = {}
+        if not no_start:
             checks = doctor()
             if not checks["ok"]:
                 raise RoomError("Dependencies are missing. No project files changed.", "dependency", checks=checks)
             if not main_session_id():
-                raise RoomError("Run /ihav-agent-room:init in Claude Code, or use init --no-start for files only", "identity")
-        # New rooms start in pair mode (admin decision 2026-10-03); the library default keeps four members.
-        room = initialize(args.project, args.mode or (None if store.exists() else NEW_ROOM_MODE))
+                raise RoomError("Run /ihav-agent-room:start in Claude Code or $ihav-agent-room:start in Codex, or use init --no-start for files only", "identity")
+            if main_host() == "codex" and store.exists():
+                # Refuse a wrong thread or unreconciled handoff before scaffolding
+                # can write any project files. Explicit start/init includes safe handoff.
+                plan = connection_plan(store, main_session_id(), allow_drain=True)
+                if command == "start" and plan["resume_required"] and not plan["handoff_required"] and not plan["blockers"]:
+                    recovery = reconnect_codex_host(store, main_session_id())
+                    plan = connection_plan(store, main_session_id(), allow_drain=True)
+                if plan["resume_required"] or plan["blockers"]:
+                    return {"initialized": False, "connected": False, "started": False, **plan}
+            if main_host() == "codex":
+                asyncio.run(probe_codex(args.project, main_session_id()))
+        # Start reuses existing project files. Init retains its explicit scaffold refresh.
+        # Both prepare a new room in pair mode without a separate setup command.
+        room = (store.room() if command == "start" and store.exists() else
+                initialize(args.project, args.mode or (None if store.exists() else NEW_ROOM_MODE)))
         mode_info = {"mode": room["mode"], "members": list(MODES[room["mode"]]), "mode_note": mode_note(room["mode"])}
-        if args.no_start:
+        if no_start:
             return {"initialized": True, "started": False, "room": room, **mode_info}
-        return {**start_room(store, main_session_id(),
-                             permission_mode=os.environ.get("IHAV_AGENT_ROOM_PERMISSION_MODE", "default")), **mode_info}
+        result = start_room(store, main_session_id(),
+                            mode=args.mode if command == "start" else None,
+                            permission_mode=os.environ.get("IHAV_AGENT_ROOM_PERMISSION_MODE", "default"),
+                            handoff=store.gateway != HOST_GATEWAYS[main_host()])
+        mode = store.room()["mode"]
+        mode_info = {"mode": mode, "members": list(MODES[mode]), "mode_note": mode_note(mode)}
+        restored = {}
+        if not result.get("handoff_pending"):
+            try:
+                saved = capture_closing(store)
+            except (RoomError, OSError) as exc:
+                saved = {"saved": False, "reason": str(exc)}
+            restored = {"working_context": working_context(store),
+                        "closing_capture": saved, "team_readiness": readiness(store)}
+        return {"initialized": True, "connected": not result.get("handoff_pending", False),
+                "gateway": store.gateway, **result, **mode_info, **recovery,
+                **restored}
+    if command == "context":
+        if args.prior_after is not None:
+            return {"prior_history": prior_history(store, args.prior_after, args.prior_limit, full=args.full)}
+        return working_context(store, full=args.full) | {"team_readiness": readiness(store)}
     if command == "global":
         return global_command(store, args)
     if command == "contract":
@@ -367,9 +446,6 @@ def run(args):
         if room["status"] == "failed":
             raise RoomError("Supervisor failed", "native", detail=room["error"])
         return {"stopped": room["status"] == "stopped"}
-    if command == "start":
-        return start_room(store, main_session_id(), args.mode,
-                          os.environ.get("IHAV_AGENT_ROOM_PERMISSION_MODE", "default"))
     if command == "mode":
         if not args.mode:
             status = store.status()
@@ -380,14 +456,16 @@ def run(args):
                         for member in status["members"]],
                     "gateway_settings_warning": status.get("gateway_settings_warning"),
                     "choices": list(SELECTABLE_MODES)}
-        if acting_member() != GATEWAY:
-            raise RoomError("Only the admin's main session changes the room mode", "authority")
+        store.main_only(acting_member())
+        if store.room().get("owner"):
+            store.actor()
         return change_mode(store, args.mode)
     if command == "effort":
         if not args.level and not args.clear:
             return store.effort_report()
-        if acting_member() != GATEWAY:
-            raise RoomError("Only the admin's main session changes member effort", "authority")
+        store.main_only(acting_member())
+        if store.room().get("owner"):
+            store.actor()
         return store.set_effort(args.level, member=args.member, clear=args.clear)
     if command == "wakes":
         return store.activity_report()
@@ -403,7 +481,11 @@ def run(args):
         status["supervisor_alive"] = observed_alive(supervisor.get("pid"), supervisor.get("stamp"))
         for member in status["members"]:
             member.pop("token_hash", None)
-            member["process_alive"] = observed_alive(member.get("pid"), member.get("stamp"))
+            if member["name"] == store.gateway and (status["room"].get("owner") or {}).get("host") == "codex":
+                member["process_alive"] = None  # The room owns no host process to inspect or terminate.
+                member["liveness_basis"] = "Codex native thread attachment, checked by the supervisor; host process is not room-owned"
+            else:
+                member["process_alive"] = observed_alive(member.get("pid"), member.get("stamp"))
         return status
     if command == "snapshot":
         return fingerprint(store.project, args.paths)
@@ -541,7 +623,7 @@ def run(args):
 
 def global_command(store, args):
     space, room = GlobalSpace(), store.room()
-    if args.action in {"post", "reply", "join", "leave"} and acting_member() != GATEWAY:
+    if args.action in {"post", "reply", "join", "leave"} and acting_member() != store.gateway:
         raise RoomError("Only the main/operator may write to the agents space", "authority")
     if args.action == "join":
         return space.register(room["id"], store.project, __version__, enabled=True)
@@ -558,10 +640,10 @@ def global_command(store, args):
         return view
     if args.action == "post":
         store.authorize_global_post(acting_member(), args.source)
-        return space.post("announcement", args.subject, args.body, origin=room["id"], member=GATEWAY,
+        return space.post("announcement", args.subject, args.body, origin=room["id"], member=store.gateway,
                           audience=args.to, expires=args.expires)
     return space.post("reply", "Re: " + space.show(args.reply_to)["subject"][:190], args.body, origin=room["id"],
-                      member=GATEWAY, reply_to=args.reply_to)
+                      member=store.gateway, reply_to=args.reply_to)
 
 
 def contract_command(store, args):
@@ -570,7 +652,7 @@ def contract_command(store, args):
         return contracts.listing(room, waiting=args.waiting, include_closed=args.all)
     if args.action == "show":
         return contracts.show(args.id)
-    if acting_member() != GATEWAY:
+    if acting_member() != store.gateway:
         raise RoomError("Only the main/operator acts on contracts for this room", "authority")
     if args.action == "propose":
         return contracts.propose(room, contracts.resolve_room(args.to), args.type, args.title, args.request,

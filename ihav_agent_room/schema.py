@@ -8,6 +8,7 @@ from ihav_agent_room.common import GATEWAY, RoomError, dumps, file_lock, now, pr
 
 
 VERSION = 3
+HOST_SCHEMA = 4  # Same ledger tables, new gateway ownership semantics. Older runtimes must refuse these rooms.
 EXTENSIONS = """
 CREATE TABLE submissions (id TEXT PRIMARY KEY, task TEXT NOT NULL REFERENCES tasks(id), data TEXT NOT NULL);
 CREATE TABLE reviews (id TEXT PRIMARY KEY, submission TEXT NOT NULL REFERENCES submissions(id), data TEXT NOT NULL);
@@ -24,6 +25,33 @@ CREATE TABLE knowledge (id TEXT PRIMARY KEY, version INTEGER NOT NULL, data TEXT
 """
 
 
+def gateway_backup(store):
+    """Committed pre-handoff state. A second reader avoids backing up our writer transaction."""
+    folder = store.runtime / "backups"
+    if folder.is_symlink():
+        raise RoomError("Backup directory must not be a symlink", "conflict")
+    folder.mkdir(mode=0o700, exist_ok=True)
+    path = folder / ("gateway-" + uid() + ".sqlite3")
+    fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    os.close(fd)
+    source, target = store.connect(), sqlite3.connect(path)
+    try:
+        source.backup(target)
+        if target.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+            raise RoomError("Gateway backup failed integrity validation", "backup")
+    finally:
+        source.close()
+        target.close()
+    with path.open("rb") as stream:
+        os.fsync(stream.fileno())
+    fd = os.open(folder, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    return str(path)
+
+
 def migrate(store):
     if not store.exists():
         raise RoomError("Room is not initialized; there is no schema to migrate", "not_initialized")
@@ -35,8 +63,8 @@ def migrate(store):
             room = json.loads(db.execute("SELECT value FROM meta WHERE key='room'").fetchone()[0])
             if room["project"] != str(store.project):
                 raise RoomError("Room belongs to another project", "conflict")
-            if room["schema"] == VERSION:
-                return {"migrated": False, "schema": VERSION}
+            if room["schema"] in {VERSION, HOST_SCHEMA}:
+                return {"migrated": False, "schema": room["schema"]}
             previous_schema = room["schema"]
             if previous_schema not in {1, 2}:
                 raise RoomError("Only schema 1 or 2 can be migrated to schema 3", "incompatible")

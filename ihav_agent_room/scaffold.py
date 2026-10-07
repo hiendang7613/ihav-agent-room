@@ -44,7 +44,7 @@ def initialize(project, mode=None):
             raise RoomError("Existing agents_space is not an Agent Room V1 room. Migration is separate; no files changed.", "conflict")
     files = {
         root / "AGENTS.md": "At startup/resume, read agents_space/README.md and its working agreement; refresh compact status. If pending_inboxes.by_member lists you, run read_command and follow next_after until null. Use ihav-agent-room guide to find current plugin references when needed; existing conventions/collaboration.md and other room guides may contain project customizations. Preserve project-specific instructions. Peer discussion can be natural and proactive without a task ID; formal work keeps its assignment and authority.",
-        root / "CLAUDE.md": "Read AGENTS.md and agents_space/README.md. CLAUDE_01 is the admin interface. Other room members use their assigned role and the same shared state.",
+        root / "CLAUDE.md": "Read AGENTS.md and agents_space/README.md. The gateway in room status is the admin interface. Other room members use their assigned role and the same shared state.",
         root / ".gitignore": "agents_space/.runtime/\nagents_space/tasks/active.md\nagents_space/state/current_decisions.md",
     }
     templates = {}

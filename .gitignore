@@ -19,6 +19,7 @@
 !/docs/v1.1.md
 !/docs/practical-learning-pilot.md
 !/assets/
+!/third_party/
 # Fixtures that tests read (kept small on purpose).
 !/dist/
 /dist/*

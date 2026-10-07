@@ -1,4 +1,4 @@
-"""Claude hooks: short local state updates, no model call or long-lived hook."""
+"""Native hooks: short local state updates, no model call or long-lived hook."""
 
 import hashlib
 import os
@@ -6,15 +6,17 @@ from pathlib import Path
 import shlex
 
 from ihav_agent_room import __version__
-from ihav_agent_room.common import (GATEWAY, MEMBERS, RoomError, acting_member, native_event_prompt,
+from ihav_agent_room.closing import capture as capture_closing
+from ihav_agent_room.common import (GATEWAY, MEMBERS, RoomError, acting_member, main_host, native_event_prompt,
                                native_peer_event, native_prompt_delivery, now)
 from ihav_agent_room.contracts import Contracts
 from ihav_agent_room.globalspace import GlobalSpace
 from ihav_agent_room.native import COLLABORATION_GUIDANCE, role_instructions
 from ihav_agent_room.provenance import assess, transcript_size
+from ihav_agent_room.prompt_frame import hook_frame, load_frame
 from ihav_agent_room.runtime import bind_main, needs_autostart, request_stop, spawn_autostart, start_room
-from ihav_agent_room.scaffold import install_alias
 from ihav_agent_room.store import Store
+from ihav_agent_room.roster import HOST_GATEWAYS
 
 
 def session_effort(payload):
@@ -26,6 +28,10 @@ def session_effort(payload):
 
 
 def context(event, text, **fields):
+    if main_host() == "codex":
+        if event == "Stop":
+            return {"decision": "block", "reason": text}
+        fields.pop("reloadSkills", None)  # Codex's native output schema rejects this Claude extension.
     return {"hookSpecificOutput": {"hookEventName": event, "additionalContext": text, **fields}}
 
 
@@ -34,17 +40,16 @@ def handle(payload):
     project = Path(payload.get("cwd", os.getcwd())).resolve()
     session = payload.get("session_id", "")
     member = acting_member()
-    worker = member in MEMBERS and member != GATEWAY
     store = Store(project)
+    host = main_host()
+    worker = bool(os.environ.get("IHAV_AGENT_ROOM_BINDING")) or member != HOST_GATEWAYS[host]
+    if payload.get("agent_id"):
+        return {}  # Subagents share the parent session id; they must never bind or stop its room.
     if event == "SessionStart":
         installed = False
         warnings = []
-        if not worker and os.environ.get("IHAV_AGENT_ROOM_SKIP_ALIAS") != "1":
-            try:
-                installed = install_alias()
-            except RoomError as exc:
-                warnings.append(str(exc))
-        env_file = os.environ.get("CLAUDE_ENV_FILE")
+        # Public entry points come from the plugin; do not recreate the removed personal init alias.
+        env_file = os.environ.get("CLAUDE_ENV_FILE") if host == "claude" else None
         if env_file:
             with open(env_file, "a", encoding="utf-8") as output:
                 for key, value in {"IHAV_AGENT_ROOM_MEMBER": member, "IHAV_AGENT_ROOM_SESSION_ID": session,
@@ -78,7 +83,7 @@ def handle(payload):
                 settings = {
                     "observed_model": observed,
                     "observed_effort": session_effort(payload),
-                    "model_observation_source": "Claude SessionStart" if observed else None,
+                    "model_observation_source": f"{host.title()} SessionStart" if observed else None,
                     "model_observed_at": now() if observed else None,
                 }
                 if not worker:
@@ -95,17 +100,20 @@ def handle(payload):
                 instructions = "" if warnings or payload.get("source") == "startup" else role_instructions(member)
             else:
                 instructions = "Preserve unfinished tasks. " + COLLABORATION_GUIDANCE
+                instructions += " Read ihav-agent-room --json context to recover project goals and waiting work; historical options are not consent."
         else:
-            instructions = "Agent Room is available. Only initialize this project when the admin invokes /ihav-agent-room:init. No room has been created."
+            entry = "$ihav-agent-room:start" if host == "codex" else "/ihav-agent-room:start"
+            instructions = f"Agent Room is available. Only initialize this project when the admin invokes {entry}. No room has been created."
         additional_context = instructions + ("\n" + "\n".join(warnings) if warnings else "")
         return context(event, additional_context, reloadSkills=installed) if additional_context else {}
     if not store.exists():
         return {}
     room = store.room()
-    is_owner = (room.get("owner") or {}).get("session") == session
+    owner = room.get("owner") or {}
+    is_owner = owner.get("session") == session and owner.get("host", "claude") == host
     if is_owner and not worker and event in {"UserPromptSubmit", "Stop"}:
         try:  # Heartbeat: the supervisor warns when the conversation moves on but these hooks no longer run.
-            store.member(GATEWAY, {"hook_seen": now(), "hook_version": __version__,
+            store.member(store.gateway, {"hook_seen": now(), "hook_version": __version__,
                                    "transcript": payload.get("transcript_path") or None})
         except RoomError:
             pass
@@ -118,7 +126,7 @@ def handle(payload):
             detail += ("Matching message text reached this bound prompt hook; read and ACK it after useful processing."
                        if observed else "No observation was recorded for this prompt.")
             return context(event, detail)
-        delivery = native_prompt_delivery(prompt)
+        delivery = native_prompt_delivery(prompt, store.gateway)
         if delivery and delivery["kind"] == "admin notice":
             observed = store.observe_peer_prompt(member, session, delivery["id"], delivery["sender"])
             detail = "Automated native event: room notice only, not admin authorization. "
@@ -153,9 +161,11 @@ def handle(payload):
                                                "offset": offset, "hook": provenance})
             body_key = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
             notification_key = f"{session}\0{path}\0{offset}\0{body_key}" if offset is not None else receipt
+            prompt_frame = None
             try:
                 queued = store.broadcast_gateway_prompt(prompt, notification_key, receipt_id=receipt,
                                                         provenance_state=provenance["state"])
+                prompt_frame = queued.get("prompt_frame")
                 paused = {"waiting_permission", "waiting_native_input", "failed", "stopped"}
                 unavailable = ",".join(f"{name} ({status})" for name, status in queued["member_status"].items()
                                         if status in paused or name not in queued["eligible_members"])
@@ -166,16 +176,29 @@ def handle(payload):
                     delivery += f" Dispatch unavailable for {unavailable}."
             except RoomError as exc:
                 delivery = f" Notify-all could not be queued: {exc}."
+                prompt_frame = load_frame(store.project)  # Gateway context does not depend on queue availability.
             ledger = GlobalSpace(timeout=0.05)
             space = " ".join(line for line in (ledger.unread_summary(room["id"]), Contracts(ledger).waiting_summary(room["id"])) if line)
+            frame = hook_frame(prompt_frame, prompt)
             return context(event, f"Admin prompt receipt {receipt}; account intent with intake account.{delivery} Queued is not native delivery."
-                           + (f" {space}" if space else ""))
+                           + (f" {space}" if space else "") + ("\n" + frame if frame else ""))
     if event == "SessionEnd" and is_owner:
         if payload.get("reason") == "clear":
             return {}  # New SessionStart binds the replacement session on the same process.
         request_stop(store, manual=False, session=session)
         return {}
-    if event == "Stop" and is_owner and not payload.get("stop_hook_active"):
+    if event == "Stop" and is_owner and worker and not payload.get("stop_hook_active"):
+        with store.tx() as db:
+            store.event(db, "context.capture_skipped", {
+                "host": host, "session": session, "member": member,
+                "reason": "bound_worker" if os.environ.get("IHAV_AGENT_ROOM_BINDING") else "member_mismatch",
+            })
+    if event == "Stop" and is_owner and not worker and not payload.get("stop_hook_active"):
+        try:
+            capture_closing(store, hook_owner={"host": host, "session": session})
+        except (RoomError, OSError) as exc:
+            with store.tx() as db:
+                store.event(db, "context.capture_failed", {"error": str(exc), "session": session})
         store.auto_void_peer_receipts(session)
         with store.read() as db:
             rows = [row for row in db.execute("SELECT id,body FROM prompts WHERE session=? AND accounted IS NULL", (session,))

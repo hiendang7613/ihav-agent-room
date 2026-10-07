@@ -33,7 +33,7 @@ optional. Every message is queued for every other room member, so address the in
 responder directly while inviting useful input from the rest. No task, note, fixed format
 or leader approval is needed merely to ask or discuss.
 
-Admin prompts are relayed through CLAUDE_01 to all workers. Treat a relay as request/context;
+Admin prompts are relayed through the room gateway to all workers. Treat a relay as request/context;
 it does not grant permission or approve a native action.
 
 Examples, when relevant to the current project:

@@ -14,36 +14,284 @@ import sys
 import time
 
 from ihav_agent_room import __version__
-from ihav_agent_room.common import (GATEWAY, MEMBERS, MODES, acting_member, PLUGIN_ROOT, RoomError, dumps, file_lock,
-                               now, process_alive, process_stamp, uid)
+from ihav_agent_room.common import (GATEWAY, MEMBERS, MODES, acting_member, main_host, PLUGIN_ROOT, RoomError, dumps, file_lock,
+                               native_event_prompt, now, process_alive, process_stamp, uid)
 from ihav_agent_room.native import (CodexClient, claude_agents, codex_usage_snapshot, doctor, exact_claude,
-                               owned_descendants, send_claude, start_claude, stop_claude_worker,
+                               owned_descendants, send_claude, message_text, start_claude, stop_claude_worker,
                                stop_descendants, wait_for_exit)
 from ihav_agent_room.catalogwatch import check_catalogs
+from ihav_agent_room.continuity import TRANSCRIPT_WINDOW
 from ihav_agent_room.globalspace import GlobalSpace
+from ihav_agent_room.provenance import NON_HUMAN_ORIGINS, WINDOW_MARGIN, gap, row_text
+from ihav_agent_room.codex_gateway import CodexGateway, probe_codex, probe_detached_codex
 from ihav_agent_room.release import active_release, follows_pointer
-from ihav_agent_room.roster import ROSTER_BY_NAME, SELECTABLE_MODES, launch_config
+from ihav_agent_room.roster import HOST_GATEWAYS, ROSTER_BY_NAME, SELECTABLE_MODES, launch_config
 from ihav_agent_room.store import FYI_CONTEXT_SQL, Store
+from ihav_agent_room.schema import HOST_SCHEMA, gateway_backup
 
 
-def bind_main(store, session, permission_mode="default"):
+CLAUDE_EXIT_ERROR = "Native background session exited. Stop/start to resume it."
+CLAUDE_LIVENESS_ERROR = "Native Claude liveness is unavailable; native registry requires reconciliation before recovery."
+
+
+def saved_codex_session(store):
+    """Host identity survives switches without becoming a background worker ID."""
+    room = store.room()
+    return (room.get("host_sessions") or {}).get("codex") or store.member(HOST_GATEWAYS["codex"]).get("native_id")
+
+
+def bind_main(store, session, permission_mode="default", host=None, handoff=False):
+    host = host or main_host()
+    gateway = HOST_GATEWAYS[host]
+    if acting_member() != gateway or os.environ.get("IHAV_AGENT_ROOM_BINDING"):
+        raise RoomError("A worker cannot become the room's admin session", "authority")
     if not session:
-        raise RoomError("Run this command from the Claude main session", "identity")
-    native = exact_claude(store.project, session)
-    owner = {"session": session, "pid": native["pid"], "stamp": process_stamp(native["pid"]),
-             "permission_mode": permission_mode}
+        raise RoomError("Run this command from the main Claude or Codex session", "identity")
+    if host != "codex" and store.gateway == HOST_GATEWAYS["codex"] and not handoff:
+        raise RoomError("This room belongs to its saved Codex gateway; connect from that session", "conflict")
+    if host == "codex":
+        saved = saved_codex_session(store)
+        if saved and saved != session:
+            raise RoomError("Resume the room's saved Codex session before connecting; its identity will not be replaced", "identity",
+                            saved_session=saved, current_session=session)
+    if host == "codex":
+        asyncio.run(probe_codex(store.project, session))
+        owner = {"host": host, "session": session, "pid": None, "stamp": None, "permission_mode": permission_mode}
+    else:
+        native = exact_claude(store.project, session)
+        owner = {"host": host, "session": session, "pid": native["pid"], "stamp": process_stamp(native["pid"]),
+                 "permission_mode": permission_mode}
     with store.tx() as db:
         room = store.get_room(db)
         old = room.get("owner") or {}
-        if old and old["session"] != session and process_alive(old["pid"], old["stamp"]):
+        previous_gateway = store.gateway
+        target = json.loads(db.execute("SELECT data FROM members WHERE name=?", (gateway,)).fetchone()[0])
+        saved = (room.get("host_sessions") or {}).get("codex") or target.get("native_id")
+        if host == "codex" and saved and saved != session:
+            raise RoomError("Resume the room's saved Codex session before connecting; its identity will not be replaced", "identity",
+                            saved_session=saved, current_session=session)
+        changed = old and (old.get("session"), old.get("host", "claude")) != (session, host)
+        if changed and (host == "codex" or old.get("host") == "codex") and room["status"] not in {"stopped", "failed"}:
+            raise RoomError("Stop the room before changing its Codex owner session", "conflict")
+        if changed and old.get("host", "claude") == "codex" and not handoff:
+            try:
+                asyncio.run(probe_codex(store.project, old["session"]))
+            except RoomError as exc:
+                if exc.code != "unavailable":
+                    raise  # Unknown liveness must never permit a takeover.
+            else:
+                raise RoomError("Another live Codex session owns this room", "conflict")
+        if changed and old.get("host", "claude") == "claude" and process_alive(old.get("pid"), old.get("stamp")):
             # /clear changes the session UUID in the SAME native process.
-            if old["pid"] != owner["pid"] or old["stamp"] != owner["stamp"]:
+            if not handoff and (old["pid"] != owner["pid"] or old["stamp"] != owner["stamp"]):
                 raise RoomError("Another live Claude session owns this room", "conflict")
+        if previous_gateway != gateway:
+            supervisor = room.get("supervisor") or {}
+            if room["status"] not in {"stopped", "failed"} or process_alive(supervisor.get("pid"), supervisor.get("stamp")):
+                raise RoomError("Stop the room before switching its gateway host", "conflict")
+            if db.execute("SELECT 1 FROM claims LIMIT 1").fetchone() or any(
+                    json.loads(row[0])["state"] not in {"done", "cancelled"} for row in db.execute("SELECT data FROM tasks")):
+                raise RoomError("Reconcile unfinished tasks and claims before switching the gateway host", "conflict")
+            if any(json.loads(row[0])["state"] in {"pending", "respond", "submitted"}
+                   for row in db.execute("SELECT data FROM approvals")):
+                raise RoomError("Resolve native approvals before switching the gateway host", "conflict")
+            if process_alive(target.get("pid"), target.get("stamp")):
+                raise RoomError("The proposed gateway still has a live room worker", "conflict")
+            room["gateway_backup"] = gateway_backup(store)
+            host_sessions = dict(room.get("host_sessions") or {})
+            background_sessions = dict(room.get("background_sessions") or {})
+            if old.get("session"):
+                host_sessions[old.get("host", "claude")] = old["session"]
+            if target.get("native_id") and target["native_id"] != session:
+                background_sessions[gateway] = target["native_id"]
+            # An old host session must never be resumed as a background worker.
+            former = json.loads(db.execute("SELECT data FROM members WHERE name=?", (previous_gateway,)).fetchone()[0])
+            background = background_sessions.get(previous_gateway)
+            if background in host_sessions.values():
+                background = None
+            former.update(native_id=background, pid=None, stamp=None, turn_id=None, status="stopped", token_hash=None,
+                          settings_application="configured; not started")
+            room["background_sessions"] = background_sessions
+            room["host_sessions"] = host_sessions
+            db.execute("UPDATE members SET data=? WHERE name=?", (dumps(former), previous_gateway))
+            store.event(db, "room.gateway_changed", {"from": previous_gateway, "to": gateway, "host": host,
+                "backup": room["gateway_backup"], "former_owner": old,
+                "previous_native_ids": {previous_gateway: (old or {}).get("session"), gateway: target.get("native_id")}})
         room["owner"] = owner
+        room.setdefault("host_sessions", {})[host] = session
+        room["gateway"] = gateway
+        if host == "codex":
+            # Version 0.7.0 and older hardcode a Claude gateway. Their get_room()
+            # rejects schema 4, preventing old hooks/CLIs from reassigning our owner.
+            room["schema"] = HOST_SCHEMA
         store.put_room(db, room)
-    store.member(GATEWAY, {"native_id": session, "pid": owner["pid"], "stamp": owner["stamp"],
-                               "status": "active", "permission_mode": permission_mode})
+    store.member(gateway, {"native_id": session, "pid": owner["pid"], "stamp": owner["stamp"],
+                           "status": "active", "permission_mode": permission_mode, "token_hash": None,
+                           "turn_id": None, "settings_application": "host-managed"})
     return owner
+
+
+def connection_plan(store, session, require_host=True, allow_drain=False):
+    """Read-only handoff plan for the current project. Other rooms are never changed."""
+    host_ready = bool(main_host() == "codex" and session
+                      and acting_member() == HOST_GATEWAYS["codex"]
+                      and not os.environ.get("IHAV_AGENT_ROOM_BINDING"))
+    if require_host and not host_ready:
+        raise RoomError("Connect from the intended Codex host, not a room worker", "identity")
+    if not host_ready:
+        session = None  # A shell, Claude session or worker is not the intended Codex host.
+    room = store.room()
+    saved = saved_codex_session(store)
+    resume_required = bool(saved and saved != session)
+    blockers = []
+    if room["status"] not in {"stopped", "failed"} and not allow_drain:
+        owner = room.get("owner") or {}
+        if owner.get("host") != "codex" or owner.get("session") != session:
+            blockers.append("Stop this room from its current gateway before connecting from Codex")
+    with store.read() as db:
+        if db.execute("SELECT 1 FROM claims LIMIT 1").fetchone() or any(
+                json.loads(row[0])["state"] not in {"done", "cancelled"} for row in db.execute("SELECT data FROM tasks")):
+            if store.gateway != HOST_GATEWAYS["codex"]:
+                blockers.append("Reconcile unfinished tasks and claims before changing the gateway host")
+        if store.gateway != HOST_GATEWAYS["codex"] and any(
+                json.loads(row[0])["state"] in {"pending", "respond", "submitted"} for row in db.execute("SELECT data FROM approvals")):
+            blockers.append("Resolve native approvals before changing the gateway host")
+    plan = {"project": str(store.project), "room": room["id"], "mode": room["mode"], "gateway": store.gateway,
+            "saved_codex_session": saved, "current_codex_session": session, "resume_required": resume_required,
+            "can_connect": host_ready and not blockers and not resume_required, "blockers": blockers,
+            "codex_host_required": not host_ready,
+            "handoff_required": store.gateway != HOST_GATEWAYS["codex"], "input_sent": False, "room_changed": False}
+    if resume_required:
+        plan["next"] = {"action": "Open the saved Codex session in this project, then run connect again",
+                        "argv": ["codex", "--cd", str(store.project), "resume", saved]}
+    elif not host_ready:
+        plan["next"] = {"action": "Open this project in a Codex host, then run connect there",
+                        "argv": ["codex", "--cd", str(store.project)]}
+    return plan
+
+
+def await_detached_shutdown(store, session, budget=10):
+    """An explicit start waits for owned cleanup after native proof the old host closed.
+
+    No forced stop, permission response, state rewrite, or native operation replay.
+    A deadline leaves ownership intact and reports recovery_pending for the skill.
+    """
+    room = store.room()
+    owner = room.get("owner") or {}
+    previous = saved_codex_session(store)
+    if (store.gateway != HOST_GATEWAYS["codex"] or owner.get("host") != "codex"
+            or owner.get("session") != previous or not previous or previous == session):
+        return
+    supervisor = room.get("supervisor") or {}
+    if room["status"] in {"stopped", "failed"} and not process_alive(supervisor.get("pid"), supervisor.get("stamp")):
+        return
+    asyncio.run(probe_detached_codex(store.project, session, previous))
+    deadline = time.monotonic() + budget
+    while time.monotonic() < deadline:
+        current = store.room()
+        if current.get("owner") != owner or current.get("generation") != room.get("generation"):
+            raise RoomError("Room ownership changed during recovery; read current state", "conflict")
+        supervisor = current.get("supervisor") or {}
+        if current["status"] in {"stopped", "failed"} and not process_alive(supervisor.get("pid"), supervisor.get("stamp")):
+            return
+        time.sleep(.1)
+    raise RoomError("Previous Codex host is confirmed closed, but owned cleanup is still pending; "
+                    "track status internally without forcing shutdown", "recovery_pending", previous_session=previous)
+
+
+def reconnect_codex_host(store, session):
+    """Explicit start can recover a stopped Codex room in a new attached host.
+
+    Preserve the old native conversation and ledger; do not claim its private
+    context was loaded into this conversation. Liveness uncertainty blocks recovery.
+    """
+    if main_host() != "codex" or acting_member() != HOST_GATEWAYS["codex"] or os.environ.get("IHAV_AGENT_ROOM_BINDING"):
+        raise RoomError("Only the current Codex main session can reconnect its room", "authority")
+    await_detached_shutdown(store, session)
+    with file_lock(store.runtime / "control.lock"), file_lock(store.runtime / "supervisor.lock", blocking=False):
+        with store.tx() as db:
+            room = store.get_room(db)
+            owner = room.get("owner") or {}
+            members = [json.loads(row[0]) for row in db.execute("SELECT data FROM members")]
+            member = next(member for member in members if member["name"] == HOST_GATEWAYS["codex"])
+            previous = (room.get("host_sessions") or {}).get("codex") or member.get("native_id")
+            if previous == session:
+                return {}
+            if (store.gateway != HOST_GATEWAYS["codex"] or owner.get("host") != "codex"
+                    or not previous or owner.get("session") != previous):
+                raise RoomError("Reconnect requires this room's recorded Codex host; worker identities stay unchanged", "identity")
+            supervisor = room.get("supervisor") or {}
+            if room["status"] not in {"stopped", "failed"} or process_alive(supervisor.get("pid"), supervisor.get("stamp")):
+                raise RoomError("The previous room supervisor must finish stopping before reconnect", "conflict")
+            if any(process_alive(member.get("pid"), member.get("stamp")) for member in members):
+                raise RoomError("A previous room worker is still live; reconnect will not interrupt it", "conflict")
+            if any(json.loads(row[0])["state"] in {"pending", "respond", "submitted"}
+                   for row in db.execute("SELECT data FROM approvals")):
+                raise RoomError("Resolve native approvals before reconnecting in another Codex conversation", "conflict")
+            asyncio.run(probe_detached_codex(store.project, session, previous))
+            backup = gateway_backup(store)
+            history = list(room.get("host_session_history") or [])
+            history.append({"host": "codex", "session": previous, "replaced_by": session, "at": now(), "backup": backup})
+            room.update(host_session_history=history, gateway_backup=backup)
+            room.setdefault("host_sessions", {})["codex"] = session
+            room["owner"] = owner | {"session": session, "pid": None, "stamp": None}
+            store.put_room(db, room)
+            member.update(native_id=session, pid=None, stamp=None, turn_id=None, token_hash=None, status="active")
+            db.execute("UPDATE members SET data=? WHERE name=?", (dumps(member), HOST_GATEWAYS["codex"]))
+            store.event(db, "room.codex_reconnected", {"previous_session": previous, "session": session, "backup": backup})
+    return {"reconnected_host": True, "previous_codex_session": previous, "recovery_backup": backup,
+            "context_recovery": "Read current status, task context, pending inbox and room history; private native conversation stays in the previous session."}
+
+
+def drain_init_handoff(store, session, budget=20):
+    """Pause new dispatch and await native idle before an explicit init transfer."""
+    host = main_host()
+    if host == "codex":
+        saved = saved_codex_session(store)
+        if saved and saved != session:
+            raise RoomError("Resume the room's saved Codex session before connecting", "identity", saved_session=saved)
+        asyncio.run(probe_codex(store.project, session))
+    else:
+        exact_claude(store.project, session)
+    with file_lock(store.runtime / "control.lock"):
+        with store.tx() as db:
+            room = store.get_room(db)
+            owner = room.get("owner") or {}
+            if store.gateway == HOST_GATEWAYS[host] and (owner.get("host", "claude"), owner.get("session")) == (host, session):
+                return None  # An identical concurrent init already completed.
+            if room["status"] in {"stopped", "failed"}:
+                return None
+            supervisor = room.get("supervisor") or {}
+            if supervisor.get("handoff_protocol") != 1 or not process_alive(supervisor.get("pid"), supervisor.get("stamp")):
+                raise RoomError("The current supervisor cannot safely drain for init; reconcile its stopped state before host transfer", "conflict")
+            if db.execute("SELECT 1 FROM claims LIMIT 1").fetchone() or any(
+                    json.loads(row[0])["state"] not in {"done", "cancelled"} for row in db.execute("SELECT data FROM tasks")):
+                raise RoomError("Reconcile unfinished tasks and claims before switching the gateway host", "conflict")
+            if any(json.loads(row[0])["state"] in {"pending", "respond", "submitted"} for row in db.execute("SELECT data FROM approvals")):
+                raise RoomError("Resolve native approvals before switching the gateway host", "conflict")
+            transition = room.get("mode_transition")
+            requester = {"host": host, "session": session}
+            if transition and (transition.get("reason") != "handoff" or transition.get("requester") != requester):
+                raise RoomError("Another room transition is already pending", "conflict")
+            if not transition:
+                room.update(restart_requested=True, mode_transition={"from": room["mode"], "to": room["mode"],
+                    "state": "draining", "reason": "handoff", "requester": requester})
+                store.put_room(db, room)
+                store.event(db, "room.handoff_requested", requester)
+    deadline = time.monotonic() + budget
+    while time.monotonic() < deadline:
+        room = store.room()
+        owner = room.get("owner") or {}
+        if store.gateway == HOST_GATEWAYS[host] and (owner.get("host", "claude"), owner.get("session")) == (host, session):
+            return None
+        transition = room.get("mode_transition") or {}
+        if transition.get("reason") != "handoff" or transition.get("requester") != requester:
+            raise RoomError("The init handoff was cancelled or superseded; no ownership was changed", "conflict")
+        if room["status"] in {"stopped", "failed"} and not room.get("supervisor"):
+            return None
+        time.sleep(.1)
+    return {"started": False, "handoff_pending": True, "status": room["status"],
+            "note": "Native turns are still draining; init can finish internally when the room stops. No turn was forced or approval answered."}
 
 
 def autostart(store, session, permission_mode="default", budget=60, pause=3):
@@ -80,7 +328,7 @@ def spawn_autostart(store, session, permission_mode="default"):
     with open(store.runtime / "autostart.log", "a", encoding="utf-8") as log:
         subprocess.Popen([sys.executable, str(PLUGIN_ROOT / "bin" / "ihav-agent-room"), "--project", str(store.project),
                           "_autostart", "--session", session, "--permission-mode", permission_mode],
-                         cwd=store.project, env=dict(os.environ, IHAV_AGENT_ROOM_MEMBER=GATEWAY),
+                         cwd=store.project, env=dict(os.environ, IHAV_AGENT_ROOM_MEMBER=HOST_GATEWAYS[main_host()]),
                          stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
 
 
@@ -93,14 +341,136 @@ def needs_autostart(store, session):
         and not process_alive(supervisor.get("pid"), supervisor.get("stamp"))
 
 
-def start_room(store, session, mode=None, permission_mode="default", automatic=False):
-    if acting_member() != GATEWAY:
+def recover_exited_pair(store, session, automatic=False, budget=10):
+    """Explicit start can clean a live controller whose sole saved worker exited.
+
+    No live native turn is interrupted: an exact owner, terminal worker state,
+    absent process and (for Claude) fresh registry absence are all required.
+    The existing supervisor owns cleanup and exact-session relaunch. Unknown
+    effects remain in the ledger; this request never queues their replay.
+    """
+    if automatic:
+        return None
+    with file_lock(store.runtime / "control.lock"):
+        room = store.room()
+        owner, supervisor = room.get("owner") or {}, room.get("supervisor") or {}
+        host = main_host()
+        if (room["mode"] != "pair" or room["status"] != "running" or room.get("mode_transition")
+                or room["gateway"] != HOST_GATEWAYS[host]
+                or (owner.get("host", "claude"), owner.get("session")) != (host, session)
+                or supervisor.get("handoff_protocol") != 1
+                or process_alive(supervisor.get("pid"), supervisor.get("stamp")) is not True):
+            return None
+        worker = next(name for name in MODES["pair"] if name != room["gateway"])
+        member = store.member(worker)
+        saved = member.get("native_id")
+        if (member["status"] not in {"stopped", "failed"} or not saved
+                or saved in (room.get("host_sessions") or {}).values()
+                or member.get("unexpected_native_id") or member.get("turn_id")
+                or process_alive(member.get("pid"), member.get("stamp")) is not False):
+            return None
+        worker_pid = member.get("pid")
+        has_pid = isinstance(worker_pid, int) and not isinstance(worker_pid, bool) and worker_pid >= 2
+        if (worker.startswith("CODEX") and (not has_pid or not isinstance(member.get("stamp"), str)
+                                            or not member["stamp"])):
+            return None  # Missing process metadata is not affirmative absence.
+        if has_pid and process_stamp(worker_pid) is not None:
+            return None  # A reused live PID also requires reconciliation.
+        store.main_only(store.actor())
+        with store.read() as db:
+            if any(json.loads(row[0])["state"] in {"pending", "respond", "submitted"}
+                   for row in db.execute("SELECT data FROM approvals")):
+                return None
+        if worker.startswith("CLAUDE"):
+            # exact_claude's unavailable also covers multiple live matches;
+            # count registry evidence directly rather than treating it as death.
+            for native in claude_agents(store.project, scoped=False):
+                if native.get("sessionId") != saved:
+                    continue
+                pid, cwd = native.get("pid"), native.get("cwd")
+                if not isinstance(cwd, str) or not cwd or Path(cwd).resolve() != store.project:
+                    return None
+                if pid is None:
+                    # --all retains completed native background jobs without
+                    # a PID. Require their explicit terminal state, no active
+                    # status, and the independently absent ledger process above.
+                    if (native.get("kind") == "background"
+                            and native.get("state") in {"stopped", "failed", "done"}
+                            and native.get("status") is None):
+                        continue
+                    return {"requested": False, "held": True, "worker": worker, "native_id": saved,
+                            "reason": "native_registry_requires_reconciliation",
+                            "native_observation": {key: native.get(key) for key in ("kind", "state", "status")},
+                            "next": "Inspect the exact saved native job and current approvals; "
+                                    "terminal exit is not established."}
+                if (not isinstance(pid, int) or isinstance(pid, bool) or pid < 2
+                        or process_stamp(pid) is not None):
+                    return None
+        backup = gateway_backup(store)
+        with store.tx() as db:
+            current = store.get_room(db)
+            observed = json.loads(db.execute("SELECT data FROM members WHERE name=?", (worker,)).fetchone()[0])
+            if current != room or observed != member:
+                raise RoomError("Pair state changed during recovery inspection; read current status", "conflict")
+            if any(json.loads(row[0])["state"] in {"pending", "respond", "submitted"}
+                   for row in db.execute("SELECT data FROM approvals")):
+                return None
+            if (process_alive(member.get("pid"), member.get("stamp")) is not False
+                    or (has_pid and process_stamp(worker_pid) is not None)):
+                raise RoomError("Saved worker liveness changed during recovery inspection", "conflict")
+            current.update(status="stopping", manual_stop=False, restart_requested=True,
+                           pair_recovery_backup=backup,
+                           mode_transition={"from": "pair", "to": "pair", "state": "restarting",
+                                            "reason": "pair_recovery", "worker": worker, "native_id": saved})
+            store.put_room(db, current)
+            store.event(db, "room.pair_recovery_requested", {"session": session, "host": host,
+                "worker": worker, "native_id": saved, "generation": room["generation"], "backup": backup})
+    recovery = {"requested": True, "worker": worker, "native_id": saved,
+                "previous_generation": room["generation"], "backup": backup}
+    deadline = time.monotonic() + budget
+    while time.monotonic() < deadline:
+        current = store.room()
+        current_owner = current.get("owner") or {}
+        if (current["gateway"] != room["gateway"] or current["mode"] != "pair"
+                or (current_owner.get("host", "claude"), current_owner.get("session")) != (host, session)
+                or store.member(worker).get("native_id") != saved):
+            raise RoomError("Pair identity changed during cleanup; read current state", "conflict")
+        if current["generation"] != room["generation"]:
+            return recovery  # The owned supervisor completed its normal restart.
+        current_supervisor = current.get("supervisor") or {}
+        if (process_alive(current_supervisor.get("pid"), current_supervisor.get("stamp")) is False
+                and process_alive(supervisor.get("pid"), supervisor.get("stamp")) is False):
+            if current["status"] == "failed":
+                raise RoomError("Owned pair cleanup failed; inspect status before retrying", "cleanup")
+            if current["status"] == "stopped":
+                return recovery
+        time.sleep(.1)
+    return {"started": False, "recovery_pending": True, "status": current["status"],
+            "pair_recovery": recovery,
+            "note": "Exact-session pair recovery requested; owned cleanup remains unconfirmed. "
+                    "Track status internally; no competing controller or native outcome replay was started."}
+
+
+def start_room(store, session, mode=None, permission_mode="default", automatic=False, handoff=False):
+    if acting_member() != HOST_GATEWAYS[main_host()] or os.environ.get("IHAV_AGENT_ROOM_BINDING"):
         raise RoomError("A worker cannot become the room's admin session", "authority")
     checks = doctor()
     if not checks["ok"]:
         raise RoomError("Native dependencies are not ready; run doctor", "dependency", checks=checks)
+    if handoff and store.gateway != HOST_GATEWAYS[main_host()]:
+        pending = drain_init_handoff(store, session)
+        if pending:
+            return pending
+    recovery = (recover_exited_pair(store, session, automatic=automatic)
+                if mode in {None, "pair"} else None)
+    if recovery and recovery.get("held"):
+        return {"started": False, "reason": "Exact native pair recovery is held for reconciliation",
+                "pair_recovery": recovery}
+    if recovery and recovery.get("recovery_pending"):
+        return recovery
+    recovery_info = {"pair_recovery": recovery} if recovery else {}
     with file_lock(store.runtime / "control.lock"):
-        owner = bind_main(store, session, permission_mode)
+        owner = bind_main(store, session, permission_mode, handoff=handoff)
         with store.tx() as db:
             room = store.get_room(db)
             supervisor = room.get("supervisor") or {}
@@ -114,7 +484,7 @@ def start_room(store, session, mode=None, permission_mode="default", automatic=F
                     room["manual_stop"] = False
                     store.put_room(db, room)
                     return {"started": False, "reason": "Exact-session restart scheduled after owned cleanup completes"}
-                return {"started": False, "reason": "supervisor already running", "room": room}
+                return {"started": False, "reason": "supervisor already running", "room": room, **recovery_info}
             target_mode = mode or room["mode"]
             if target_mode not in MODES:
                 raise RoomError("Unknown mode")
@@ -144,10 +514,11 @@ def start_room(store, session, mode=None, permission_mode="default", automatic=F
             with store.tx() as db:
                 room = store.get_room(db)
                 if room["generation"] == generation:
-                    room["supervisor"] = {"pid": process.pid, "stamp": process_stamp(process.pid)}
+                    room["supervisor"] = {"pid": process.pid, "stamp": process_stamp(process.pid), "handoff_protocol": 1}
                     store.put_room(db, room)
         return {"started": True, "status": "starting", "generation": generation,
-                "note": "Launch requested. status reports native readiness; this is not a model-response receipt."}
+                "note": "Launch requested. status reports native readiness; this is not a model-response receipt.",
+                **recovery_info}
 
 
 def requested_config(member, name):
@@ -228,6 +599,101 @@ def approval_response(store, actor, approval_id, source, decision):
         return data
 
 
+def hook_input_observations(store, session, transcript):
+    """Recorded hook text/offset pairs, never a verdict about sender authority."""
+    observed = []
+    with store.read() as db:
+        for row in db.execute("SELECT data FROM events WHERE kind='prompt.receipt' ORDER BY seq DESC LIMIT 100"):
+            try:
+                data = json.loads(row[0])
+                if (data.get("session") != session or data.get("transcript") != transcript
+                        or type(data.get("offset")) is not int or data["offset"] < 0):
+                    continue
+                prompt = db.execute("SELECT body,session,origin FROM prompts WHERE id=?", (data["receipt"],)).fetchone()
+                if prompt and prompt["session"] == session and prompt["origin"] == "hook":
+                    observed.append({"body": prompt["body"].strip(), "offset": data["offset"]})
+            except (ValueError, KeyError, TypeError, AttributeError):
+                continue
+    return list(reversed(observed))  # Earlier receipts claim their exact row first.
+
+
+def unobserved_input_timestamp(path, project, host, session, seen, now_ts, quiet, observed_inputs=()):
+    """Bounded activity hint only; user-shaped rows never attest human authority.
+
+    Tool output also changes transcript mtime. Unknown formats or source identity
+    stay quiet; protected receipt decisions remain in the provenance owner.
+    """
+    path = Path(path)
+    if not session or host not in {"claude", "codex"} or path.suffix != ".jsonl" or path.is_symlink():
+        return None
+    try:
+        with path.open("rb") as stream:
+            if host == "codex":
+                header = json.loads(stream.readline(65536))
+                payload = header.get("payload") if isinstance(header, dict) else None
+                if (header.get("type") != "session_meta" or not isinstance(payload, dict)
+                        or payload.get("id") != session or payload.get("cwd") != str(project)):
+                    return None
+            stream.seek(0, 2)
+            start = max(0, stream.tell() - TRANSCRIPT_WINDOW)
+            stream.seek(max(0, start - 1))
+            boundary = stream.read(1) if start else b"\n"
+            tail = stream.read(TRANSCRIPT_WINDOW)
+    except (OSError, ValueError, TypeError, AttributeError):
+        return None
+    lines = tail.splitlines(keepends=True)
+    cursor = start
+    if start and boundary != b"\n":
+        cursor += len(lines[0]) if lines else 0
+        lines = lines[1:]  # Ignore a partial row without reading past the tail budget.
+    inputs = []
+    for line in lines:
+        position, cursor = cursor, cursor + len(line)
+        try:
+            row = json.loads(line)
+            if not isinstance(row, dict):
+                continue
+            if host == "claude" and (row.get("type") != "user" or row.get("sessionId") != session
+                                      or row.get("cwd") != str(project)):
+                continue
+            if host == "codex" and row.get("type") != "response_item":
+                continue
+            message = row.get("message") if host == "claude" else row.get("payload")
+            if not isinstance(message, dict):
+                continue
+            blocks = message.get("content")
+            if isinstance(blocks, list) and any(not isinstance(block, dict) or block.get("type") not in {"input_text", "text"}
+                                                for block in blocks):
+                continue  # A mixed/image/tool projection cannot prove missing prompt hooks.
+            text, origin = row_text(row)
+            if not text or not text.strip() or (isinstance(origin, dict) and origin.get("kind") in NON_HUMAN_ORIGINS):
+                continue
+            if (native_event_prompt(text) or text.lstrip().startswith(("<environment_context>", "<skill>",
+                                                                     "<user_instructions>", "<turn_aborted>"))):
+                continue  # Known native/context envelopes are not an admin input-activity signal.
+            if host == "claude" and (row.get("isMeta") is True or text.lstrip().startswith((
+                    "<command-name>", "<command-message>", "<local-command-stdout>", "<local-command-stderr>",
+                    "<bash-input>", "<bash-stdout>", "<bash-stderr>"))):
+                continue  # Local host commands have their own lifecycle, not a model prompt.
+            stamp = datetime.fromisoformat(row["timestamp"])
+            if stamp.tzinfo is None:
+                continue
+            inputs.append({"start": position, "end": cursor, "text": text.strip(), "stamp": stamp})
+        except (ValueError, TypeError, KeyError, AttributeError):
+            continue
+    covered = set()
+    for observation in observed_inputs:
+        matches = [row for row in inputs if row["text"] == observation["body"] and row["start"] not in covered]
+        if matches:
+            nearest = min(matches, key=lambda row: gap(row, observation["offset"]))
+            if gap(nearest, observation["offset"])[0] <= WINDOW_MARGIN + 2 * len(observation["body"].encode("utf-8")):
+                covered.add(nearest["start"])
+    for row in inputs:
+        if row["start"] not in covered and seen < row["stamp"].timestamp() <= now_ts - quiet:
+            return row["stamp"].isoformat()
+    return None
+
+
 class Supervisor:
     def __init__(self, store, generation):
         self.store, self.generation = store, generation
@@ -239,16 +705,29 @@ class Supervisor:
         self.last_registry_check = 0
         self.next_release_check = 0
         self.next_catalog_check = 0
+        self.next_global_queue_check = 0
         self.next_hook_check = 0
+        self.gateway_client = None
+        self.gateway_live = False
+        self.next_gateway_check = 0
 
     def worker_env(self, name):
         binding = secrets.token_hex(24)
         self.store.member(name, {"token_hash": hashlib.sha256(binding.encode()).hexdigest()})
         env = dict(os.environ)
+        # Explicit empty values also clear a pre-spawned Claude spare's env:
+        # omitted keys survive its native overlay. Each host supplies the
+        # correct plugin roots when invoking that plugin's hooks.
+        for key in ("PLUGIN_ROOT", "CLAUDE_PLUGIN_ROOT"):
+            env[key] = ""
+        # Clear a spare's stale pin, preserving a deliberate supervisor pin.
+        env["IHAV_AGENT_ROOM_PIN"] = os.environ.get("IHAV_AGENT_ROOM_PIN", "")
         env.update(IHAV_AGENT_ROOM_MEMBER=name, IHAV_AGENT_ROOM_BINDING=binding,
                    IHAV_AGENT_ROOM_PROJECT=str(self.store.project),
+                   IHAV_AGENT_ROOM_HOST=ROSTER_BY_NAME[name]["host"],
                    CLAUDE_CODE_DISABLE_BG_EXIT_HANDOFF="1")
-        env.pop("IHAV_AGENT_ROOM_SESSION_ID", None)
+        for key in ("IHAV_AGENT_ROOM_SESSION_ID", "AGENT_ROOM_SESSION_ID", "CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID", "CODEX_SESSION_ID"):
+            env.pop(key, None)
         env.pop("CLAUDE_CODE_MESSAGING_TOKEN", None)
         env.pop("CLAUDE_CODE_MESSAGING_SOCKET", None)
         env.pop("CLAUDE_ENV_FILE", None)
@@ -266,7 +745,7 @@ class Supervisor:
                     data.update(state="expired", detail="Native connection ended; await a new request")
                     db.execute("UPDATE approvals SET data=? WHERE id=?", (dumps(data), row["id"]))
         for name in MEMBERS:
-            if name == GATEWAY:
+            if name == self.store.gateway:
                 continue
             member = self.store.member(name)
             if name.startswith("CLAUDE") and member["native_id"]:
@@ -295,6 +774,11 @@ class Supervisor:
         self.recovered = True
 
     async def launch(self):
+        owner = self.store.room().get("owner") or {}
+        if owner.get("host") == "codex":
+            self.gateway_client = CodexGateway(self.store.project, owner["session"])
+            await self.gateway_client.start()
+            self.gateway_live = True
         await self.recover_owned()
         try:  # Join the machine agents space; a ledger problem never blocks the room.
             GlobalSpace().register(self.store.room()["id"], self.store.project, __version__)
@@ -303,14 +787,15 @@ class Supervisor:
                 self.store.event(db, "agents_space.unavailable", {"error": f"{type(exc).__name__}: {exc}"})
         room = self.store.room()
         for name in MODES[room["mode"]]:
-            if name == GATEWAY:
+            if name == self.store.gateway:
                 continue
             current = self.store.room()
             if self.stopping or not self.owner_alive() or current["status"] == "stopping" or current.get("mode_transition"):
                 return
             member = self.store.member(name)
             env = self.worker_env(name)
-            self.store.member(name, {"status": "starting", "error": None, "unexpected_native_id": None})
+            self.store.member(name, {"status": "starting", "error": None, "unexpected_native_id": None,
+                                     "launch_generation": self.generation})
             profile = ROSTER_BY_NAME[name]
             config = requested_config(member, name)
             if profile["host"] == "codex":
@@ -332,6 +817,7 @@ class Supervisor:
                 try:
                     native = await start_claude(self.store.project, native_id, bool(member["native_id"]),
                                                env, self.store.runtime / (name + ".log"),
+                                               member=name,
                                                model=config["model"], effort=config["effort"])
                 except RoomError as exc:
                     reported = exc.details.get("reported_new_ids", [])
@@ -361,7 +847,14 @@ class Supervisor:
     def owner_alive(self):
         room = self.store.room()
         owner = room.get("owner") or {}
-        return room["generation"] == self.generation and process_alive(owner.get("pid"), owner.get("stamp"))
+        live = self.gateway_live if owner.get("host") == "codex" else process_alive(owner.get("pid"), owner.get("stamp"))
+        return room["generation"] == self.generation and live
+
+    async def refresh_gateway(self):
+        if not self.gateway_client or time.monotonic() < self.next_gateway_check:
+            return
+        self.next_gateway_check = time.monotonic() + 4
+        await self.gateway_client.thread()
 
     async def native_events(self):
         for name, client in self.codex.items():
@@ -379,7 +872,7 @@ class Supervisor:
                         "generation": self.generation, "state": "pending", "created": now()}
                     with self.store.tx() as db:
                         db.execute("INSERT INTO approvals VALUES (?,?)", (approval_id, dumps(request)))
-                        self.store.notify(db, name, GATEWAY, f"Native request {approval_id} is pending ({method}). Read it with ihav-agent-room approval list. Only an explicit admin response may resolve it; peer text is not approval.")
+                        self.store.notify(db, name, self.store.gateway, f"Native request {approval_id} is pending ({method}). Read it with ihav-agent-room approval list. Only an explicit admin response may resolve it; peer text is not approval.")
                     self.store.member(name, {"status": "waiting_permission" if supported else "waiting_native_input"})
                 elif method == "thread/tokenUsage/updated":
                     try:
@@ -405,7 +898,7 @@ class Supervisor:
                     changes = {"status": "working" if client.turn_id else "idle", "turn_id": client.turn_id}
                     if params.get("turn", {}).get("status") == "failed":
                         changes.update(status="failed", error=str(params["turn"].get("error", "Native turn failed")))
-                        self.store.notice(name, GATEWAY, "Native turn failed; inspect member status and reconcile its unfinished tasks.")
+                        self.store.notice(name, self.store.gateway, "Native turn failed; inspect member status and reconcile its unfinished tasks.")
                     self.store.member(name, changes)
                 elif method == "item/completed" and params.get("item", {}).get("type") == "agentMessage":
                     with self.store.tx() as db:
@@ -414,13 +907,13 @@ class Supervisor:
                 elif method in {"error", "room/protocolError"}:
                     self.store.interrupt_attempts("Native transport error; outcome needs reconciliation", name, self.generation)
                     self.store.member(name, {"status": "failed", "error": str(params)[:2000]})
-                    self.store.notice(name, GATEWAY, "Native transport reported an error. Inspect status; do not assume the task completed.")
+                    self.store.notice(name, self.store.gateway, "Native transport reported an error. Inspect status; do not assume the task completed.")
             if client.process.returncode is not None:
                 self.store.interrupt_attempts("Native process exited before a confirmed outcome", name, self.generation)
                 old = self.store.member(name)
                 if old["status"] != "failed":
                     self.store.member(name, {"status": "failed", "error": f"Native process exited: {client.process.returncode}"})
-                    self.store.notice(name, GATEWAY, "Native process exited. Its tasks need reconciliation; independent members continue.")
+                    self.store.notice(name, self.store.gateway, "Native process exited. Its tasks need reconciliation; independent members continue.")
 
     async def approvals(self):
         with self.store.read() as db:
@@ -503,7 +996,9 @@ class Supervisor:
                 message["knowledge_reference"] = attempt["knowledge_reference"]
             turn_id = None
             try:
-                if target.startswith("CODEX"):
+                if target == self.store.gateway and self.gateway_client:
+                    result = await self.gateway_client.send(message | {"native_text": message_text(message)})
+                elif target.startswith("CODEX"):
                     # Mode, effort override or gateway sync takes effect on the next Codex turn.
                     self.codex[target].model_config = requested_config(member, target)
                     result = await self.codex[target].send(message)
@@ -521,8 +1016,8 @@ class Supervisor:
                 result, detail = "unknown", str(exc)
             self.store.finish_dispatch(attempt["id"], result, detail, turn_id)
             # One main notice per recipient failure episode, never a notice-about-notice loop.
-            if result in {"failed", "unknown"} and not message["pending_recovery"] and target != GATEWAY:
-                self.store.notice(target, GATEWAY, f"Delivery {message['id']} to {target} is {result}. Inspect pending inbox/status and reconcile effects before retrying; independent work can continue.")
+            if result in {"failed", "unknown"} and not message["pending_recovery"] and target != self.store.gateway:
+                self.store.notice(target, self.store.gateway, f"Delivery {message['id']} to {target} is {result}. Inspect pending inbox/status and reconcile effects before retrying; independent work can continue.")
 
     async def refresh_claude(self, force=False):
         if not self.claude or (not force and time.monotonic() - self.last_registry_check < 4):
@@ -531,17 +1026,67 @@ class Supervisor:
         agents = await asyncio.to_thread(claude_agents, self.store.project)
         for name, native_id in self.claude.items():
             matches = [x for x in agents if x.get("sessionId") == native_id and Path(x.get("cwd", "/nonexistent")).resolve() == self.store.project]
-            if not matches or not process_stamp(matches[0].get("pid")):
-                self.store.interrupt_attempts("Claude session exited; no native turn result was observed", name, self.generation)
-                self.store.member(name, {"status": "stopped", "error": "Native background session exited. Stop/start to resume it."})
+            # A retained dead background row can accompany the live interactive
+            # row for one saved session. Inspect every exact row before reporting
+            # exit, and keep the stamp from that one liveness observation.
+            inspected, pid_stamps = [], {}
+            for row in matches:
+                pid = row.get("pid")
+                valid_pid = type(pid) is int and pid >= 2
+                if valid_pid and pid not in pid_stamps:
+                    pid_stamps[pid] = process_stamp(pid)
+                row_stamp = pid_stamps.get(pid) if valid_pid else None
+                terminal_row = (row.get("kind") == "background"
+                                and row.get("state") in {"stopped", "failed", "done"}
+                                and row.get("status") is None
+                                and (pid is None or valid_pid))
+                inspected.append((row, row_stamp, terminal_row))
+            live = [(row, row_stamp) for row, row_stamp, _ in inspected if row_stamp]
+            # Only affirmative inactive terminal rows may be dismissed beside
+            # the sole live row; another blocked/unverifiable row remains held.
+            single_live = len(live) == 1 and all(row_stamp or terminal_row for _, row_stamp, terminal_row in inspected)
+            native = (live[0][0] if single_live else
+                      next((row for row, row_stamp, terminal_row in inspected if not row_stamp and not terminal_row),
+                           matches[0] if matches else None))
+            stamp = live[0][1] if single_live else None
+            observation = {key: native.get(key) if native else None for key in ("kind", "state", "status")}
+            if len(matches) > 1:
+                observation.update(matching_rows=len(matches), live_rows=len(live))
+            if not stamp:
+                # A public blocked row can mean assistant-reported needs or a
+                # native prompt. Missing liveness does not prove terminal exit.
+                terminal = bool(inspected) and not live and all(terminal_row for _, _, terminal_row in inspected)
+                observation["reason"] = "native_terminal_observed" if terminal else "native_registry_requires_reconciliation"
+                detail = "Claude session exited" if terminal else "Claude session liveness unavailable"
+                self.store.interrupt_attempts(f"{detail}; no native turn result was observed", name, self.generation)
+                with self.store.tx() as db:
+                    old = json.loads(db.execute("SELECT data FROM members WHERE name=?", (name,)).fetchone()[0])
+                    changes = {"status": "stopped", "native_observation": observation}
+                    if old.get("error") in {None, CLAUDE_EXIT_ERROR, CLAUDE_LIVENESS_ERROR}:
+                        changes["error"] = CLAUDE_EXIT_ERROR if terminal else CLAUDE_LIVENESS_ERROR
+                    if not terminal and old.get("error") == CLAUDE_EXIT_ERROR:
+                        changes["previous_native_exit_error"] = CLAUDE_EXIT_ERROR
+                    db.execute("UPDATE members SET data=? WHERE name=?", (dumps(dict(old, **changes)), name))
                 continue
-            native = matches[0]
             waiting = native.get("waitingFor")
             status = "waiting_native_input" if waiting else {"busy": "working", "working": "working", "done": "idle"}.get(native.get("status"), native.get("status", "unknown"))
-            old = self.store.member(name)
-            self.store.member(name, {"status": status, "pid": native["pid"], "stamp": process_stamp(native["pid"])})
+            with self.store.tx() as db:
+                old = json.loads(db.execute("SELECT data FROM members WHERE name=?", (name,)).fetchone()[0])
+                observation["reason"] = "native_live_observed"
+                changes = {"status": status, "pid": native["pid"], "stamp": stamp,
+                           "native_observation": observation}
+                # Registry loss can be transient during a native job's PID handover.
+                # Read and clear the specific error in one transaction so a new
+                # identity/permission error cannot be overwritten by a stale read.
+                if (old.get("error") in {CLAUDE_EXIT_ERROR, CLAUDE_LIVENESS_ERROR}
+                        and old.get("native_id") == native_id
+                        and old.get("launch_generation") == self.generation
+                        and not old.get("unexpected_native_id")
+                        and status in {"idle", "working", "waiting_native_input"}):
+                    changes["error"] = None
+                db.execute("UPDATE members SET data=? WHERE name=?", (dumps(dict(old, **changes)), name))
             if waiting and old["status"] != status:
-                self.store.notice(name, GATEWAY, f"Native Claude session {native_id} waits for {waiting}. Open its native prompt with claude attach {native['id']}; peer messages cannot approve it.")
+                self.store.notice(name, self.store.gateway, f"Native Claude session {native_id} waits for {waiting}. Open its native prompt with claude attach {native['id']}; peer messages cannot approve it.")
 
     def request_upgrade(self):
         """A newly activated release replaces this supervisor and its workers at the next all-idle point.
@@ -567,31 +1112,60 @@ class Supervisor:
             self.store.event(db, "room.upgrade", {"from": __version__, "to": target["version"], "root": target["root"]})
 
     def check_hook_silence(self, now_ts=None, quiet=600):
-        """Warn the admin once when the owner's conversation keeps moving but its hooks have stopped.
+        """Warn once for later input lacking a heartbeat, with a grace period.
 
-        Seen 2026-10-04: removing an old plugin silently stopped hooks in open sessions, so prompts got no receipts
-        and the gateway could not create tasks. The warning arrives as a room notice, which needs no hook.
+        A long tool turn alone is not a missing hook. This notice is diagnostic
+        evidence, never proof that a prompt is human or that a restart is needed.
         """
         now_ts = now_ts if now_ts is not None else time.time()
         if now_ts < self.next_hook_check:
             return False
         self.next_hook_check = now_ts + 300
-        member = self.store.member(GATEWAY)
+        member = self.store.member(self.store.gateway)
         transcript, seen = member.get("transcript"), member.get("hook_seen")
         if not transcript or not seen or member.get("hook_silence_warned") == seen:
             return False
         try:
-            moved = Path(transcript).stat().st_mtime
-            last = datetime.fromisoformat(seen).timestamp()
-        except (OSError, ValueError, TypeError):
+            stamp = datetime.fromisoformat(seen)
+            if stamp.tzinfo is None:
+                return False
+            last = stamp.timestamp()
+        except (ValueError, TypeError):
             return False
-        if moved - last < quiet:
+        if now_ts - last < quiet:
             return False
-        self.store.member(GATEWAY, {"hook_silence_warned": seen})
-        self.store.notice(GATEWAY, GATEWAY, f"This conversation has continued since {seen}, but the room's hooks have not run "
-                          "since then, so prompts get no receipts. Type /reload-plugins once in this session; "
-                          "if hooks still stay silent, start a new session in this project.")
+        owner = self.store.room().get("owner") or {}
+        host, session = owner.get("host", "claude"), owner.get("session")
+        if member.get("native_id") != session:
+            return False
+        try:
+            recorded = hook_input_observations(self.store, session, transcript)
+            observed = unobserved_input_timestamp(transcript, self.store.project, host, session, last, now_ts, quiet, recorded)
+        except (RoomError, sqlite3.Error, OSError):
+            return False  # Hook diagnostics cannot block room work when their evidence is unavailable.
+        if not observed or self.store.member(self.store.gateway).get("hook_seen") != seen:
+            return False  # A hook may have arrived while the bounded tail was inspected.
+        self.store.member(self.store.gateway, {"hook_silence_warned": seen})
+        self.store.notice(self.store.gateway, self.store.gateway,
+                          f"Hook activity diagnostic: a later input row at {observed} has no newer recorded room hook after {seen}. "
+                          f"Check this {host.title()} session's trusted/enabled hooks and hook errors before choosing recovery.")
         return True
+
+    async def import_global_queue(self):
+        """Import data for this already running room, never start a recipient room."""
+        if time.monotonic() < self.next_global_queue_check:
+            return
+        self.next_global_queue_check = time.monotonic() + 2
+        try:
+            return await asyncio.to_thread(GlobalSpace(timeout=0.05).import_queue, self.store)
+        except (RoomError, sqlite3.Error, OSError, ValueError, TypeError, AttributeError, KeyError) as exc:
+            self.next_global_queue_check = time.monotonic() + 30
+            try:
+                with self.store.tx(timeout=0.05) as db:
+                    self.store.event(db, "agents_space.queue_unavailable", {"error": f"{type(exc).__name__}: {exc}"})
+            except (RoomError, sqlite3.Error, OSError):
+                pass  # A locked local ledger cannot record a diagnostic yet.
+            return {"queued": 0, "error": str(exc)}
 
     async def watch_catalogs(self):
         """Ask the shared ledger whether this supervisor should look at plugin catalogs now (plan N-ac8dc5ab)."""
@@ -625,6 +1199,11 @@ class Supervisor:
 
     async def shutdown(self):
         failures = []
+        if self.gateway_client:
+            try:
+                await self.gateway_client.close()
+            except (OSError, RoomError) as exc:
+                failures.append(f"Gateway proxy: {exc}")
         for name, client in self.codex.items():
             try:
                 await client.stop()
@@ -652,11 +1231,11 @@ class Supervisor:
                             error="; ".join(failures) or self.error, supervisor=None)
                 self.store.put_room(db, room)
                 if not failures and self.recovered:
-                    db.execute("DELETE FROM claims WHERE owner != ?", (GATEWAY,))
+                    db.execute("DELETE FROM claims WHERE owner != ?", (self.store.gateway,))
                     # A stopped writer's task must be re-claimed before further editing.
                     for row in db.execute("SELECT id,version,data FROM tasks").fetchall():
                         task = json.loads(row["data"])
-                        if task["owner"] != GATEWAY and task["state"] == "running":
+                        if task["owner"] != self.store.gateway and task["state"] == "running":
                             task["state"] = "ready"
                             self.store.save(db, "tasks", task, row["version"])
         self.store.interrupt_attempts("Room stopped without a confirmed native result; reconcile before retry", generation=self.generation)
@@ -670,6 +1249,7 @@ class Supervisor:
             try:
                 await self.launch()
                 while not self.stopping and self.owner_alive() and self.store.room()["status"] != "stopping":
+                    await self.refresh_gateway()
                     await self.native_events()
                     await self.approvals()
                     self.request_upgrade()
@@ -678,6 +1258,7 @@ class Supervisor:
                     await self.refresh_claude(force=bool(self.store.room().get("mode_transition")))
                     if self.finish_mode_restart():
                         break
+                    await self.import_global_queue()
                     await self.dispatch()
                     await asyncio.sleep(.3)
             except (RoomError, OSError, ValueError, KeyError) as exc:
@@ -685,5 +1266,6 @@ class Supervisor:
             finally:
                 await self.shutdown()
         room = self.store.room()
-        if room.get("restart_requested") and not room["manual_stop"] and room["status"] == "stopped" and self.owner_alive():
-            start_room(self.store, room["owner"]["session"], permission_mode=room["owner"]["permission_mode"], automatic=True)
+        if (room.get("restart_requested") and not room["manual_stop"] and room["status"] == "stopped" and self.owner_alive()
+                and (room.get("mode_transition") or {}).get("reason") != "handoff"):
+            await asyncio.to_thread(start_room, self.store, room["owner"]["session"], permission_mode=room["owner"]["permission_mode"], automatic=True)

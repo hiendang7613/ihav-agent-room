@@ -13,7 +13,8 @@ from ihav_agent_room.guides import GUIDES
 
 
 PATTERNS = ("ihav_agent_room/*.py", "bin/ihav-agent-room", ".claude-plugin/*.json", ".codex-plugin/*.json", "hooks/*.json",
-            "resources/*.md", "skills/*/SKILL.md", "templates/**/*.md", "docs/v1.1.md")
+            "resources/*.md", "skills/*/SKILL.md", "templates/**/*.md", "docs/v1.1.md", "third_party/*.whl", "third_party/*.md")
+PUBLIC_SKILLS = ("start", "status", "stop", "mode", "effort", "doctor")
 
 
 def build(output, source=PLUGIN_ROOT):
@@ -24,11 +25,16 @@ def build(output, source=PLUGIN_ROOT):
             if path.is_symlink() or not path.resolve().is_relative_to(source) or not path.is_file():
                 raise RoomError(f"Package source must be a regular in-project file: {path}", "conflict")
             selected[path.relative_to(source).as_posix()] = path.read_bytes()
+    skill_files = {f"skills/{name}/SKILL.md" for name in PUBLIC_SKILLS}
+    unexpected_skills = {name for name in selected if name.startswith("skills/")} - skill_files
+    if unexpected_skills:
+        raise RoomError("Unexpected plugin skills", "package", unexpected=sorted(unexpected_skills))
     required = {"bin/ihav-agent-room", "ihav_agent_room/cli.py", "hooks/hooks.json", "resources/init-alias.md",
-                "skills/init/SKILL.md", "skills/init-agents-space/SKILL.md", "templates/README.md", ".claude-plugin/plugin.json",
+                *skill_files, "hooks/codex.json", ".codex-plugin/plugin.json", "templates/README.md", ".claude-plugin/plugin.json",
                 ".claude-plugin/marketplace.json", "docs/v1.1.md", "resources/distribution-readme.md",
                 "ihav_agent_room/guides.py", *GUIDES.values(),
-                "resources/collaboration-guidance.md", "ihav_agent_room/knowledge.py", "ihav_agent_room/package_verifier.py"}
+                "resources/collaboration-guidance.md", "ihav_agent_room/knowledge.py", "ihav_agent_room/package_verifier.py",
+                "third_party/websockets-14.2-py3-none-any.whl"}
     if required - selected.keys():
         raise RoomError("Missing required package files", "package", missing=sorted(required - selected.keys()))
     plugin = json.loads(selected[".claude-plugin/plugin.json"])

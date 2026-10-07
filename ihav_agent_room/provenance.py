@@ -33,7 +33,18 @@ def transcript_size(path):
 def row_text(row):
     """(text, origin) of a transcript row that carries prompt text, else (None, None)."""
     attachment = row.get("attachment") or {}
-    if row.get("type") == "user":
+    if row.get("type") == "response_item" and isinstance(row.get("payload"), dict):
+        payload = row["payload"]
+        if payload.get("type") != "message" or payload.get("role") != "user":
+            return None, None
+        text = payload.get("content")
+        origin = payload.get("origin") or row.get("origin")
+        if payload.get("clientId") or payload.get("client_user_message_id"):
+            origin = {"kind": "plugin"}  # An injected input is never a human approval.
+        if isinstance(text, list):
+            text = "\n".join(block.get("text", "") for block in text if isinstance(block, dict)
+                             and block.get("type") in {"input_text", "text"})
+    elif row.get("type") == "user":
         text, origin = (row.get("message") or {}).get("content"), row.get("origin")
         if isinstance(text, list):
             text = "\n".join(block.get("text", "") for block in text if isinstance(block, dict) and block.get("type") == "text")

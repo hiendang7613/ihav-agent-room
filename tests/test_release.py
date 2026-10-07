@@ -11,7 +11,7 @@ import unittest
 from unittest.mock import patch
 
 from ihav_agent_room import __version__
-from ihav_agent_room.common import GATEWAY, RoomError
+from ihav_agent_room.common import HOST_GATEWAYS, RoomError
 from ihav_agent_room.globalspace import GlobalSpace
 from ihav_agent_room.release import activate, active_release, inspect_root, pointer_path
 from ihav_agent_room.runtime import Supervisor
@@ -125,16 +125,42 @@ class LauncherTests(ReleaseFixture, unittest.TestCase):
         self.assertEqual(active_release()["version"], "9.5.0")
 
     def test_only_the_gateway_may_switch_the_release_through_the_cli(self):
-        new = self.install("9.1.0")
-        for member, ok in (("CODEX_01", False), (GATEWAY, True)):
-            with self.subTest(member=member):
-                result = subprocess.run([sys.executable, str(SOURCE / "bin" / "ihav-agent-room"), "--json", "activate", "--root", str(new)],
-                                        env=dict(self.env, IHAV_AGENT_ROOM_MEMBER=member), capture_output=True, text=True, timeout=60)
-                self.assertEqual(result.returncode == 0, ok, result.stdout + result.stderr)
-                if ok:  # Every room learns about it through the machine agents space.
-                    entry = json.loads(result.stdout)["data"]["announced"]
-                    ledger = GlobalSpace(self.home / ".ihav" / "agents_space")
-                    self.assertEqual(ledger.show(entry)["subject"], "ihav-agent-room 9.1.0 is active")
+        old, new = self.install("9.0.0"), self.install("9.1.0")
+        for host, gateway in HOST_GATEWAYS.items():
+            for member in ("CLAUDE_01", "CODEX_01", "CLAUDE_EXPERT", "CODEX_EXPERT"):
+                for binding in ("", "worker-binding"):
+                    with self.subTest(host=host, member=member, binding=binding):
+                        activate(str(old))
+                        before = pointer_path().read_text()
+                        ok = member == gateway and not binding
+                        env = dict(self.env, IHAV_AGENT_ROOM_HOST=host,
+                                   IHAV_AGENT_ROOM_MEMBER=member, IHAV_AGENT_ROOM_BINDING=binding)
+                        result = subprocess.run(
+                            [sys.executable, str(SOURCE / "bin" / "ihav-agent-room"), "--json", "activate", "--root", str(new)],
+                            env=env, capture_output=True, text=True, timeout=60)
+                        self.assertEqual(result.returncode == 0, ok, result.stdout + result.stderr)
+                        if ok:  # Both host gateways announce the same qualified activation.
+                            entry = json.loads(result.stdout)["data"]["announced"]
+                            ledger = GlobalSpace(self.home / ".ihav" / "agents_space")
+                            self.assertEqual(ledger.show(entry)["subject"], "ihav-agent-room 9.1.0 is active")
+                        else:
+                            self.assertEqual(json.loads(result.stdout)["error"]["code"], "authority")
+                            self.assertEqual(pointer_path().read_text(), before)
+
+    def test_bound_workers_cannot_roll_back_the_release(self):
+        old, new = self.install("9.0.0"), self.install("9.1.0")
+        activate(str(old))
+        activate(str(new))
+        before = pointer_path().read_text()
+        for host, member in HOST_GATEWAYS.items():
+            with self.subTest(host=host):
+                result = subprocess.run(
+                    [sys.executable, str(SOURCE / "bin" / "ihav-agent-room"), "--json", "activate", "--rollback"],
+                    env=dict(self.env, IHAV_AGENT_ROOM_HOST=host, IHAV_AGENT_ROOM_MEMBER=member,
+                             IHAV_AGENT_ROOM_BINDING="worker-binding"), capture_output=True, text=True, timeout=60)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertEqual(json.loads(result.stdout)["error"]["code"], "authority")
+                self.assertEqual(pointer_path().read_text(), before)
 
 
 class SupervisorUpgradeTests(ReleaseFixture, unittest.TestCase):

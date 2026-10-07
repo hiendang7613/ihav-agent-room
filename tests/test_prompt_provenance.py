@@ -156,7 +156,8 @@ class PromptProvenanceTests(EvidenceFixture, unittest.TestCase):
         self.assertIn("Admin prompt receipt", self.submit(UNMARKED, path=None))
         receipt = self.receipt(UNMARKED)
         error = self.refused("native_approval", lambda: self.respond(receipt), "unverified")
-        self.assertIn("Ask the admin to repeat", str(error))
+        self.assertIn("Repeating plain text is not a verified recovery path", str(error))
+        self.assertIn("if the host omits origin labels, this capability is unavailable", str(error))
         self.assertEqual(self.approval_state(), "pending")
         self.assertEqual(self.events("prompt.consumed", receipt), [])
 

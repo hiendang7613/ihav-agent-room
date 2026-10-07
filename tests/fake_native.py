@@ -126,6 +126,23 @@ def app_server():
             continue
         if method == "initialize":
             emit({"id": request_id, "result": {"userAgent": "fake-native-contract-fixture"}})
+        elif method == "thread/read":
+            host = json.loads((ROOT / "codex-host.json").read_text())
+            if params["threadId"] != host["id"]:
+                emit({"id": request_id, "error": {"code": -1, "message": "Unknown host thread"}})
+            else:
+                emit({"id": request_id, "result": {"thread": host}})
+        elif method == "thread/queue/list":
+            if (ROOT / "queue_unsupported").exists():
+                emit({"id": request_id, "error": {"code": -32601, "message": "Queue unavailable"}})
+            else:
+                emit({"id": request_id, "result": {"data": [], "nextCursor": None}})
+        elif method == "thread/queue/add":
+            record("codex_gateway_queue", params)
+            if (ROOT / "queue_crash_after_input").exists():
+                os._exit(7)
+            emit({"id": request_id, "result": {"queuedSubmission": {
+                "id": str(uuid.uuid4()), "clientUserMessageId": params["clientUserMessageId"], "input": params["input"]}}})
         elif method in {"thread/start", "thread/resume"}:
             thread = params.get("threadId") or str(uuid.uuid4())
             if method == "thread/resume" and not (ROOT / (thread + ".thread")).exists():

@@ -1,5 +1,22 @@
 # Room CLI for members
 
+`status.room.gateway` identifies the admin gateway. In Codex-hosted rooms it is CODEX_01;
+Claude-hosted rooms keep CLAUDE_01. `$ihav-agent-room:start` in Codex and
+`/ihav-agent-room:start` in Claude are the single normal entry commands: setup,
+safe host transfer, exact-session resume and machine agents-space registration.
+`init` remains a compatible setup command with managed-block scaffold refresh.
+For a stopped Codex-hosted room, start can attach the current conversation after
+the former exact conversation is verified notLoaded. Its ID and a SQLite backup
+stay recorded. Read shared task context and history; private native conversation
+was not imported. Live/uncertain owners, workers or approvals block reattachment.
+Examples below that address CLAUDE_01 as main
+should address the current gateway instead when discussing admin intent or integration.
+`connect --check` reads the existing room's migration plan from any shell without changing it.
+An ordinary shell gets `codex_host_required: true` and the exact saved-session resume command.
+Actual connection must run through tools in that saved Codex host session.
+`connect --handoff` requires the exact saved CODEX_01 session and a stopped, reconciled room;
+it preserves the mode and all ledger records, and leaves the old host process alive.
+
 If command syntax or its contract is unclear, use `ihav-agent-room --help` or the relevant subcommand help. All results are JSON: `ok`, then `data` or `error`. Use `--json` for compact one-line results.
 An error with `committed: true` means the state mutation succeeded but its Markdown projection failed;
 inspect the returned data instead of repeating the mutation. Do not use generic shell eval or concatenate
