@@ -27,7 +27,7 @@ Admin describes goals in ordinary language; main operates the room tools and rep
 See [collaboration](conventions/collaboration.md) for the interface and peer freedom. After upgrading,
 `ihav-agent-room guide collaboration` serves the current reference without replacing custom project rules.
 
-- New rooms start in `pair` mode: CLAUDE_01 (CLAUDE_WORKER, the admin gateway) and CODEX_01 (CODEX_WORKER).
+- New rooms start in `pair` mode: CLAUDE_01 (CLAUDE_WORKER) and CODEX_01 (CODEX_WORKER). The session that starts the room is its gateway: CLAUDE_01 in Claude Code, CODEX_01 in Codex.
   `advisors` adds CLAUDE_EXPERT and CODEX_EXPERT. The legacy modes `default` and `full` keep all four.
   Only members of the current mode run; address experts only when status lists them as running.
 - A logical room message queues deliveries for all other members. The direct addressee owns its

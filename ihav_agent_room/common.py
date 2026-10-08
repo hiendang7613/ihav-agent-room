@@ -12,7 +12,7 @@ import subprocess
 import tempfile
 import uuid
 
-from ihav_agent_room.roster import GATEWAY, MEMBERS as ROSTER_MEMBERS, MODE_MEMBERS, canonical_member
+from ihav_agent_room.roster import GATEWAY, HOST_GATEWAYS, MEMBERS as ROSTER_MEMBERS, MODE_MEMBERS, canonical_member
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
@@ -27,15 +27,24 @@ def main_session_id():
     started on an older plugin (reported by ai-ucg-design 2026-10-04). Identity is still checked against the room
     owner and the live native registry.
     """
-    for key in ("IHAV_AGENT_ROOM_SESSION_ID", "CLAUDE_CODE_SESSION_ID", "AGENT_ROOM_SESSION_ID"):
+    for key in ("IHAV_AGENT_ROOM_SESSION_ID", "CLAUDE_CODE_SESSION_ID", "AGENT_ROOM_SESSION_ID", "CODEX_THREAD_ID"):
         if os.environ.get(key):
             return os.environ[key]
     return ""
 
 
-def acting_member(default=GATEWAY):
+def main_host():
+    host = os.environ.get("IHAV_AGENT_ROOM_HOST")
+    if host:
+        if host not in HOST_GATEWAYS:
+            raise RoomError("Unknown native host", "identity")
+        return host
+    return "claude" if os.environ.get("CLAUDE_CODE_SESSION_ID") else "codex" if os.environ.get("CODEX_THREAD_ID") else "claude"
+
+
+def acting_member(default=None):
     """The member this process acts as: IHAV_AGENT_ROOM_MEMBER (an id or an alias), else `default`."""
-    return canonical_member(os.environ.get("IHAV_AGENT_ROOM_MEMBER", default))
+    return canonical_member(os.environ.get("IHAV_AGENT_ROOM_MEMBER", default or HOST_GATEWAYS[main_host()]))
 
 
 class RoomError(Exception):
@@ -104,7 +113,7 @@ def native_peer_event(body):
     return {"id": identity["id"], "sender": identity["sender"]}
 
 
-def native_prompt_delivery(body):
+def native_prompt_delivery(body, gateway=GATEWAY):
     """Return a stored room delivery identity eligible for bound prompt observation."""
     identity = native_event_identity(body)
     if not identity:
@@ -112,7 +121,7 @@ def native_prompt_delivery(body):
     if identity["kind"] in {"peer event", "peer broadcast"} and identity["sender"]:
         return {"id": identity["id"], "sender": identity["sender"], "kind": identity["kind"]}
     if identity["kind"] == "admin notice":
-        return {"id": identity["id"], "sender": GATEWAY, "kind": identity["kind"]}
+        return {"id": identity["id"], "sender": gateway, "kind": identity["kind"]}
     return None
 
 

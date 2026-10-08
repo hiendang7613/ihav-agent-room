@@ -1,6 +1,6 @@
 {
   "name": "ihav-agent-room",
-  "version": "0.7.0",
+  "version": "0.8.9",
   "description": "Native Claude Code + Codex agent rooms with shared tasks, peer messaging, reviews, a machine agents space and cross-room contracts.",
   "author": {
     "name": "hiendang7613"
@@ -8,10 +8,11 @@
   "license": "MIT",
   "keywords": ["agents", "codex", "coordination"],
   "skills": "./skills/",
+  "hooks": "./hooks/codex.json",
   "interface": {
     "displayName": "ihav-agent-room",
     "shortDescription": "Persistent Claude Code and Codex rooms that coordinate on one project",
-    "longDescription": "Run a room of Claude Code and Codex members on one project with shared tasks, reviews and peer messages, native session recovery, a machine-wide agents space for announcements, and contracts between rooms. The room is started from Claude Code; Codex members run as app-server workers.",
+    "longDescription": "Run a room from your existing Claude Code or local Codex session, with shared tasks, reviews, peer messages and native session recovery. The starting session remains the host-managed gateway; other members run in the background. Codex hosting requires native control-proxy and queue support.",
     "developerName": "hiendang7613",
     "category": "Productivity",
     "capabilities": ["Instructions"],

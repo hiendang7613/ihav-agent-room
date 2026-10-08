@@ -33,11 +33,13 @@ BUDGETS = {
     "review_delivery_total": 2050,
     "review_fyi_total": 1300,
     # 2026-10-03: +40 bytes buy the ihav-agent-room command name in status next steps.
-    "status_compact_one_task": 2740,
+    # 2026-10-04: +40 bytes expose the actual gateway member for Claude/Codex ownership.
+    "status_compact_one_task": 2780,
     # 2026-10-02: +20 bytes buy the admin's eight-section reply shape (6. Risks, 7. AIIdeas) in the guidance line.
     # 2026-10-03: +90 bytes buy the admin's three reply zones (Agents-Zone, Result-Zone, Admin-Zone).
     # 2026-10-03: +70 bytes buy the admin's automation rule in the shared guidance.
-    "main_sessionstart_context": 1280,
+    # 2026-10-05: +170 bytes direct a new gateway to durable project context and its authority limit.
+    "main_sessionstart_context": 1450,
     "admin_prompt_context": 300,
     # DEC-020 (2026-10-01): cap wrapper bytes using the longest generated notice ID and max receipt ID.
     "admin_notice_delivery_overhead": 550,
@@ -122,7 +124,6 @@ class ContextBudgetTests(EvidenceFixture, unittest.TestCase):
         }
         payload = {"cwd": str(self.project), "session_id": "main"}
         with patch.object(hooks, "bind_main"), patch.object(hooks, "start_room", return_value={"reason": "x"}), \
-                patch.object(hooks, "install_alias", return_value=False), \
                 patch.dict(os.environ, IHAV_AGENT_ROOM_MEMBER="CLAUDE_01", CLAUDE_ENV_FILE=""):
             def context(**fields):
                 return hooks.handle(payload | fields)["hookSpecificOutput"]["additionalContext"]

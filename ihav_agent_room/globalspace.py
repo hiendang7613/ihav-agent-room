@@ -2,8 +2,9 @@
 
 v1 carries announcements to all registered rooms (or named rooms), explicit replies to the origin room, and release
 notices written by `activate`. Entries are immutable and are data, never instructions or admin consent. A room reads
-them through its gateway: the hook mentions unread entries, `ihav-agent-room global list` shows them. Nothing here
-starts a native turn. A busy or broken ledger never blocks local room work.
+them through its gateway. Addressed entries are queued as local system notices without starting any room.
+An already running supervisor retries bounded imports and uses its normal queue dispatch. Queueing is not native
+delivery or processing; a busy or broken ledger never blocks local room work.
 """
 
 import json
@@ -14,6 +15,7 @@ import secrets
 import sqlite3
 
 from ihav_agent_room.common import RoomError, now
+from ihav_agent_room.store import Store
 
 SCHEMA = 1
 MAX_BODY_BYTES = 8 * 1024
@@ -71,6 +73,10 @@ class GlobalSpace:
         if schema != str(SCHEMA):
             db.close()
             raise RoomError(f"Agents space schema {schema!r} is not supported by this release", "incompatible")
+        # Establish the queue feature's cutover atomically. Existing pre-queue
+        # history stays readable but is not replayed into newly upgraded rooms.
+        db.execute("INSERT OR IGNORE INTO meta (key,value) SELECT 'queue_start_seq', "
+                   "CAST(COALESCE(MAX(seq), 0) AS TEXT) FROM entries")
         return db
 
     def policy_for(self, project):
@@ -153,13 +159,83 @@ class GlobalSpace:
                        "created,expires) VALUES (:id,:kind,:origin_room,:origin_project,:origin_member,:audience,:reply_to,"
                        ":subject,:body,:created,:expires)", entry)
             db.execute("COMMIT")
-            return self.show(entry["id"], db=db)
+            posted = self.show(entry["id"], db=db)
         except BaseException:
             if db.in_transaction:
                 db.execute("ROLLBACK")
             raise
         finally:
             db.close()
+        # The global entry is committed first. Queue failures never suggest reposting it.
+        posted["queue"] = self.enqueue_posted(posted["id"])
+        return posted
+
+    def enqueue_posted(self, entry_id):
+        """Queue to existing addressed ledgers, including stopped rooms; never initialize/start them."""
+        result = {"enqueued": {}, "existing": {}, "pending": {}}
+        try:
+            db = self.connect()
+            try:
+                row = db.execute("SELECT * FROM entries WHERE id=?", (entry_id,)).fetchone()
+                if row is None:
+                    raise RoomError("Global entry is missing", "not_found")
+                ledger_id = db.execute("SELECT value FROM meta WHERE key='ledger_id'").fetchone()[0]
+                queue_start = int(db.execute("SELECT value FROM meta WHERE key='queue_start_seq'").fetchone()[0])
+                recipients = [dict(room) for room in db.execute("SELECT * FROM rooms WHERE enabled=1")
+                              if row["seq"] > max(room["joined_seq"], queue_start)
+                              and row["origin_room"] != room["room_id"]
+                              and self._addressed(row, room["room_id"])
+                              and not (row["expires"] and row["expires"] < now())]
+                entry = self._entry(row)
+            finally:
+                db.close()
+        except (RoomError, sqlite3.Error, OSError, ValueError, TypeError, KeyError) as exc:
+            return result | {"error": str(exc), "committed_entry": entry_id}
+        for room in recipients:
+            try:
+                receipts = Store(room["project"]).queue_global_entries(ledger_id, room["room_id"], [entry],
+                    initial_cursor=max(room["joined_seq"], queue_start))
+                receipt = receipts[0]
+                result["enqueued" if receipt["new"] else "existing"][room["room_id"]] = receipt["message"]
+            except (RoomError, sqlite3.Error, OSError, ValueError, TypeError, KeyError) as exc:
+                result["pending"][room["room_id"]] = str(exc)
+        return result
+
+    def import_queue(self, store, limit=20):
+        """Recover addressed notices in a bounded scan independent of global read markers."""
+        if type(limit) is not int or not 1 <= limit <= 20:
+            raise RoomError("Global queue limit must be between 1 and 20", "invalid")
+        if not self.path.is_file():
+            return {"joined": False, "queued": 0}
+        local = store.connect(timeout=0.05)
+        try:
+            room_id = store.get_room(local)["id"]
+        finally:
+            local.close()
+        db = self.connect()
+        try:
+            room = db.execute("SELECT * FROM rooms WHERE room_id=?", (room_id,)).fetchone()
+            if room is None or not room["enabled"]:
+                return {"joined": False, "queued": 0}
+            if room["project"] != str(store.project):
+                raise RoomError("Global directory does not match the receiving room project", "conflict")
+            ledger_id = db.execute("SELECT value FROM meta WHERE key='ledger_id'").fetchone()[0]
+            queue_start = int(db.execute("SELECT value FROM meta WHERE key='queue_start_seq'").fetchone()[0])
+            local = store.connect(timeout=0.05)
+            try:
+                old = local.execute("SELECT value FROM meta WHERE key=?",
+                                    ("agents_space.queue_cursor:" + ledger_id,)).fetchone()
+                start = max(room["joined_seq"], int(old[0]) if old else queue_start)
+            finally:
+                local.close()
+            rows = list(db.execute("SELECT * FROM entries WHERE seq>? ORDER BY seq LIMIT ?", (start, limit)))
+            entries = [self._entry(row) for row in rows if row["origin_room"] != room_id
+                       and self._addressed(row, room_id) and not (row["expires"] and row["expires"] < now())]
+            scanned = rows[-1]["seq"] if rows else start
+        finally:
+            db.close()
+        receipts = store.queue_global_entries(ledger_id, room_id, entries, initial_cursor=start, scanned_seq=scanned)
+        return {"joined": True, "queued": sum(receipt["new"] for receipt in receipts), "scanned_seq": scanned}
 
     def show(self, entry_id, db=None):
         own = db is None
@@ -186,7 +262,7 @@ class GlobalSpace:
             return True
         try:
             audience = json.loads(row["audience"])
-        except ValueError:
+        except (ValueError, TypeError):
             return False  # A malformed entry is skipped, never shown to the wrong room.
         return isinstance(audience, list) and room_id in audience
 

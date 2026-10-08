@@ -4,6 +4,8 @@
 !/.gitignore
 !/LICENSE
 !/README.md
+!/CHANGELOG.md
+!/.github/
 !/.claude-plugin/
 !/.codex-plugin/
 !/ihav_agent_room/
@@ -18,7 +20,9 @@
 /docs/*
 !/docs/v1.1.md
 !/docs/practical-learning-pilot.md
+!/docs/catalog-updates.md
 !/assets/
+!/third_party/
 # Fixtures that tests read (kept small on purpose).
 !/dist/
 /dist/*

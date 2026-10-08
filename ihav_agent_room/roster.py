@@ -2,7 +2,7 @@
 
 The gateway is the existing host session, so its model/effort are observed from the host when available, not changed by
 the room. Spawned members receive their configured model/effort at the native boundary. Stable ledger ids do not
-change; aliases are another name for the same member. A Codex-hosted gateway still needs its own provenance contract.
+change; aliases are another name for the same member. The room records which worker is the host-managed gateway.
 """
 
 ROSTER = (
@@ -22,6 +22,20 @@ DEFAULT_MEMBERS = tuple(member["name"] for member in ROSTER if member["default_m
 GATEWAY = next(member["name"] for member in ROSTER if member["gateway"])
 ALIASES = {member["alias"]: member["name"] for member in ROSTER if member["alias"]}
 LAUNCHED_CLAUDE = next(member["name"] for member in ROSTER if member["host"] == "claude" and not member["gateway"])
+HOST_GATEWAYS = {host: next(member["name"] for member in ROSTER if member["host"] == host and member["role"] == "worker")
+                 for host in ("claude", "codex")}
+
+
+def room_gateway(room):
+    """Legacy rooms keep their Claude gateway; malformed owner metadata fails closed."""
+    owner = room.get("owner") or {}
+    host = owner.get("host", "claude")
+    if host not in HOST_GATEWAYS:
+        raise ValueError("Unknown room owner host")
+    gateway = room.get("gateway", HOST_GATEWAYS[host])
+    if gateway != HOST_GATEWAYS[host]:
+        raise ValueError("Room gateway does not match its owner host")
+    return gateway
 
 
 def canonical_member(name):

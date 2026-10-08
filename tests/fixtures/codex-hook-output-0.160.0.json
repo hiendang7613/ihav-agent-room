@@ -1,0 +1,170 @@
+{
+  "source": "Embedded output schemas from local OpenAI Codex v0.160.0",
+  "schemas": {
+    "SessionStart": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "SessionStartHookSpecificOutputWire": {
+          "additionalProperties": false,
+          "properties": {
+            "additionalContext": {
+              "default": null,
+              "type": "string"
+            },
+            "hookEventName": {
+              "const": "SessionStart",
+              "type": "string"
+            }
+          },
+          "required": [
+            "hookEventName"
+          ],
+          "type": "object"
+        }
+      },
+      "properties": {
+        "continue": {
+          "default": true,
+          "type": "boolean"
+        },
+        "hookSpecificOutput": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/SessionStartHookSpecificOutputWire"
+            }
+          ],
+          "default": null
+        },
+        "stopReason": {
+          "default": null,
+          "type": "string"
+        },
+        "suppressOutput": {
+          "default": false,
+          "type": "boolean"
+        },
+        "systemMessage": {
+          "default": null,
+          "type": "string"
+        }
+      },
+      "title": "session-start.command.output",
+      "type": "object"
+    },
+    "UserPromptSubmit": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "BlockDecisionWire": {
+          "enum": [
+            "block"
+          ],
+          "type": "string"
+        },
+        "UserPromptSubmitHookSpecificOutputWire": {
+          "additionalProperties": false,
+          "properties": {
+            "additionalContext": {
+              "default": null,
+              "type": "string"
+            },
+            "hookEventName": {
+              "const": "UserPromptSubmit",
+              "type": "string"
+            }
+          },
+          "required": [
+            "hookEventName"
+          ],
+          "type": "object"
+        }
+      },
+      "properties": {
+        "continue": {
+          "default": true,
+          "type": "boolean"
+        },
+        "decision": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/BlockDecisionWire"
+            }
+          ],
+          "default": null
+        },
+        "hookSpecificOutput": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/UserPromptSubmitHookSpecificOutputWire"
+            }
+          ],
+          "default": null
+        },
+        "reason": {
+          "default": null,
+          "type": "string"
+        },
+        "stopReason": {
+          "default": null,
+          "type": "string"
+        },
+        "suppressOutput": {
+          "default": false,
+          "type": "boolean"
+        },
+        "systemMessage": {
+          "default": null,
+          "type": "string"
+        }
+      },
+      "title": "user-prompt-submit.command.output",
+      "type": "object"
+    },
+    "Stop": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "BlockDecisionWire": {
+          "enum": [
+            "block"
+          ],
+          "type": "string"
+        }
+      },
+      "properties": {
+        "continue": {
+          "default": true,
+          "type": "boolean"
+        },
+        "decision": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/BlockDecisionWire"
+            }
+          ],
+          "default": null
+        },
+        "reason": {
+          "default": null,
+          "description": "Claude requires `reason` when `decision` is `block`; we enforce that semantic rule during output parsing rather than in the JSON schema.",
+          "type": "string"
+        },
+        "stopReason": {
+          "default": null,
+          "type": "string"
+        },
+        "suppressOutput": {
+          "default": false,
+          "type": "boolean"
+        },
+        "systemMessage": {
+          "default": null,
+          "type": "string"
+        }
+      },
+      "title": "stop.command.output",
+      "type": "object"
+    }
+  }
+}

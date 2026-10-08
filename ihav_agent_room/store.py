@@ -8,12 +8,14 @@ from pathlib import Path
 import sqlite3
 import json
 
-from ihav_agent_room.common import (GATEWAY, MEMBERS, MODES, RoomError, acting_member, canonical_member, atomic_write, dumps, main_session_id,
+from ihav_agent_room.common import (GATEWAY, MEMBERS, MODES, RoomError, acting_member, main_host, canonical_member, atomic_write, dumps, main_session_id,
                                file_lock, fingerprint, native_event_prompt, now, overlaps, scoped_path, uid)
 from ihav_agent_room.evidence import bounded, capture, digest, matches_terms, nonempty_strings, source_matches
 from ihav_agent_room.provenance import assess_chain
-from ihav_agent_room.roster import EFFORT_LEVELS, ROSTER_BY_NAME, mode_settings
-from ihav_agent_room.schema import EXTENSIONS, KNOWLEDGE_SCHEMA, VERSION
+from ihav_agent_room.prompt_frame import frame_for_prompt, load_frame
+from ihav_agent_room.roster import EFFORT_LEVELS, ROSTER_BY_NAME, mode_settings, room_gateway
+from ihav_agent_room.schema import (EXTENSIONS, HOST_SCHEMA, KNOWLEDGE_SCHEMA, VERSION,
+                                   LEGACY_WORKER_SESSION_SCHEMA, WORKER_SESSION_SCHEMA)
 
 
 SCHEMA = """
@@ -78,20 +80,24 @@ class Store:
             if path.is_symlink():
                 raise RoomError(f"Runtime cannot use a symlink: {path}")
 
+    @property
+    def gateway(self):
+        return room_gateway(self.room()) if self.exists() else GATEWAY
+
     def exists(self):
         return self.path.is_file()
 
-    def connect(self):
+    def connect(self, *, timeout=10):
         if not self.exists():
-            raise RoomError("Room is not initialized. Run /ihav-agent-room:init.", "not_initialized")
-        connection = sqlite3.connect(self.path, timeout=10, isolation_level=None)
+            raise RoomError("Room is not initialized. Run /ihav-agent-room:start in Claude Code or $ihav-agent-room:start in Codex.", "not_initialized")
+        connection = sqlite3.connect(self.path, timeout=timeout, isolation_level=None)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys=ON")
         return connection
 
     @contextmanager
-    def tx(self):
-        db = self.connect()
+    def tx(self, *, timeout=10):
+        db = self.connect(timeout=timeout)
         try:
             db.execute("BEGIN IMMEDIATE")
             self.get_room(db)
@@ -162,7 +168,7 @@ class Store:
             settings = mode_settings(mode, name)
             member.update(requested_model=settings["model"], requested_effort=settings["effort"],
                           model_label=settings["label"], effort_source="mode")
-            if ROSTER_BY_NAME[name]["host"] == "claude" and name != GATEWAY and member.get("native_id"):
+            if ROSTER_BY_NAME[name]["host"] == "claude" and name != self.gateway and member.get("native_id"):
                 member["settings_pending_restart"] = True
             db.execute("UPDATE members SET data=? WHERE name=?", (dumps(member), name))
 
@@ -172,12 +178,12 @@ class Store:
             raise RoomError("Effort must be one of: " + ", ".join(EFFORT_LEVELS))
         with self.tx() as db:
             room = self.get_room(db)
-            names = [canonical_member(member)] if member else [name for name in MEMBERS if name != GATEWAY]
+            names = [canonical_member(member)] if member else [name for name in MEMBERS if name != self.gateway]
             for name in names:
                 if name not in MEMBERS:
                     raise RoomError("Unknown member")
-                if name == GATEWAY:
-                    raise RoomError("The gateway is your own session; change it with /effort in Claude Code", "authority")
+                if name == self.gateway:
+                    raise RoomError("The gateway is your own session; change it in the native host", "authority")
                 data = json.loads(db.execute("SELECT data FROM members WHERE name=?", (name,)).fetchone()[0])
                 if clear:
                     data.update(requested_effort=mode_settings(room["mode"], name)["effort"], effort_source="mode")
@@ -196,13 +202,13 @@ class Store:
             return False
         with self.tx() as db:
             room = self.get_room(db)
-            gateway = json.loads(db.execute("SELECT data FROM members WHERE name=?", (GATEWAY,)).fetchone()[0])
+            gateway = json.loads(db.execute("SELECT data FROM members WHERE name=?", (self.gateway,)).fetchone()[0])
             previous = room.get("synced_effort")
             if previous is None:
                 observed = gateway.get("observed_effort")
                 previous = observed if observed in EFFORT_LEVELS else None
             gateway.update(observed_effort=level, effort_observed_at=now())
-            db.execute("UPDATE members SET data=? WHERE name=?", (dumps(gateway), GATEWAY))
+            db.execute("UPDATE members SET data=? WHERE name=?", (dumps(gateway), self.gateway))
             if room.get("synced_effort") == level:
                 return False
             baseline = previous is None or previous == level
@@ -214,7 +220,7 @@ class Store:
                 return False
             self.put_room(db, room)
             for name in MEMBERS:
-                if name == GATEWAY:
+                if name == self.gateway:
                     continue
                 data = json.loads(db.execute("SELECT data FROM members WHERE name=?", (name,)).fetchone()[0])
                 data.update(requested_effort=level, effort_source="gateway")
@@ -232,7 +238,7 @@ class Store:
                 data = json.loads(db.execute("SELECT data FROM members WHERE name=?", (name,)).fetchone()[0])
                 members.append({"name": name, "in_mode": name in MODES[room["mode"]],
                                 "requested_effort": data.get("requested_effort"),
-                                "source": "your own session (host-managed)" if name == GATEWAY else data.get("effort_source", "mode"),
+                                "source": "your own session (host-managed)" if name == self.gateway else data.get("effort_source", "mode"),
                                 "observed_effort": data.get("observed_effort"),
                                 "pending_restart": bool(data.get("settings_pending_restart"))})
             return {"mode": room["mode"], "synced_effort": room.get("synced_effort"), "members": members,
@@ -240,7 +246,7 @@ class Store:
 
     def gateway_settings_warning(self, room, gateway):
         """Admin decision R1.a: warn when the gateway's observed model or effort differs from the mode's setting."""
-        wanted = mode_settings(room["mode"], GATEWAY)
+        wanted = mode_settings(room["mode"], self.gateway)
         hints = []
         observed_model = (gateway.get("observed_model") or "").lower()
         if observed_model and wanted["model"] not in observed_model:
@@ -256,7 +262,7 @@ class Store:
     @staticmethod
     def get_room(db):
         room = json.loads(db.execute("SELECT value FROM meta WHERE key='room'").fetchone()[0])
-        if room["schema"] != VERSION:
+        if room["schema"] not in {VERSION, HOST_SCHEMA, LEGACY_WORKER_SESSION_SCHEMA, WORKER_SESSION_SCHEMA}:
             raise RoomError("Unsupported room schema. Stop with the compatible plugin, then run ihav-agent-room migrate for schema 1 or 2.", "incompatible")
         return room
 
@@ -286,26 +292,42 @@ class Store:
             return member
 
     def actor(self):
-        name = canonical_member(os.environ.get("IHAV_AGENT_ROOM_MEMBER", ""))
+        name = acting_member()
         session = main_session_id()
         with self.read() as db:
             room = self.get_room(db)
-            if name == GATEWAY:
+            if name == self.gateway:
                 owner = room.get("owner") or {}
-                if owner.get("session") == session and session:
+                if (owner.get("session") == session and session
+                        and owner.get("host", "claude") == main_host()
+                        and not os.environ.get("IHAV_AGENT_ROOM_BINDING")):
                     return name
             elif name in MEMBERS:
                 member = json.loads(db.execute("SELECT data FROM members WHERE name=?", (name,)).fetchone()[0])
                 token = os.environ.get("IHAV_AGENT_ROOM_BINDING", "")
                 if token and member.get("token_hash") == hashlib.sha256(token.encode()).hexdigest():
+                    if member.get("session_replacement"):
+                        # Native exact resume reloads a shared settings file. A
+                        # retired job might obtain its new token, but never its
+                        # new UUID. The initial fresh hook can bind only while
+                        # this generation's explicit allocation is pending.
+                        records = [item for item in room.get("worker_session_history", [])
+                                   if item["id"] == member["session_replacement"] and item["member"] == name]
+                        retired = {item["retired_session"] for item in room.get("worker_session_history", [])}
+                        native_matches = (bool(session) and session not in retired and len(records) == 1
+                                          and (member.get("native_id") == session or
+                                               member.get("native_id") is None and member["status"] == "starting"
+                                               and records[0]["state"] == "launching"
+                                               and records[0]["launch_generation"] == room["generation"]))
+                        if not native_matches:
+                            raise RoomError("Replacement worker native identity does not match its current binding", "identity")
                     if name in MODES[room["mode"]] and room["status"] in {"starting", "running", "stopping"}:
                         return name
         raise RoomError("This process is not bound to an active room member", "identity")
 
-    @staticmethod
-    def main_only(actor):
-        if actor != GATEWAY:
-            raise RoomError("Only CLAUDE_01 records admin intent or changes assignment/authority", "authority")
+    def main_only(self, actor):
+        if actor != self.gateway:
+            raise RoomError(f"Only {self.gateway} records admin intent or changes assignment/authority", "authority")
 
     @staticmethod
     def source(db, prompt_id, use):
@@ -344,7 +366,8 @@ class Store:
             message = f"The host transcript labels this prompt {provenance['kind']}, not admin; it cannot be a receipt"
         elif use in PROTECTED_USES and provenance["state"] != "human":
             message = (f"Host provenance of this receipt is {provenance['state']} ({provenance['reason']}); this use needs an admin prompt the "
-                       "host confirms as human. Ask the admin to repeat the instruction as plain text; intake account still works")
+                       "host confirms as human. Recheck the original host row after it is written; if the host omits origin labels, "
+                       "this capability is unavailable. Repeating plain text is not a verified recovery path; intake account still works")
         else:
             Store.event(db, "prompt.consumed", {"receipt": prompt_id, "use": use} | provenance)
             return provenance
@@ -511,8 +534,8 @@ class Store:
             raise RoomError("Unsupported task update fields")
         with self.tx() as db:
             task = self.record(db, "tasks", task_id)
-            if actor != task["owner"] and actor != GATEWAY:
-                raise RoomError("Only the task owner or CLAUDE_01 can update it", "authority")
+            if actor != task["owner"] and actor != self.gateway:
+                raise RoomError(f"Only the task owner or {self.gateway} can update it", "authority")
             state = changes.get("state", task["state"])
             previous_state = task["state"]
             if state not in TASK_STATES:
@@ -737,7 +760,7 @@ class Store:
             task["last_progress"] = now()
             self.save(db, "tasks", task, task["version"])
             self.event(db, "review.recorded", {"task": task["id"], "review": receipt["id"], "verdict": verdict, "actor": actor})
-            for recipient in {task["owner"], GATEWAY} - {actor}:
+            for recipient in {task["owner"], self.gateway} - {actor}:
                 self.notify(db, actor, recipient, f"Review {receipt['id']}: {verdict}. Read findings and current source before the next action; task completion remains separate.", task["id"])
             if ack_id is not None:
                 self._acknowledge(db, actor, ack_id,
@@ -977,7 +1000,7 @@ class Store:
             if admin:
                 self.main_only(actor)
                 self.source(db, data.get("source"), "note_admin")
-            elif actor not in MEMBERS or actor not in {note["author"], GATEWAY}:
+            elif actor not in MEMBERS or actor not in {note["author"], self.gateway}:
                 raise RoomError("Only the author or main may resolve this advisory note; send counterevidence to its author", "authority")
             if not data.get("answer", "").strip():
                 raise RoomError("Keep the answer or reason and its scope")
@@ -1015,7 +1038,7 @@ class Store:
                                "Read the advisory note; the task contract and authority are unchanged.")
                 self.notify(db, actor, task["owner"], summary + instruction, task_id)
                 notified.add(task["owner"])
-        for recipient in {GATEWAY, note["author"]} - notified - {actor}:
+        for recipient in {self.gateway, note["author"]} - notified - {actor}:
             self.notify(db, actor, recipient, summary + f"Read ihav-agent-room note show {note['id']} before acting; this notice grants no authority.")
 
     def wake_resumed_work(self, generation):
@@ -1027,7 +1050,7 @@ class Store:
             for row in db.execute("SELECT data FROM tasks").fetchall():
                 task = json.loads(row[0])
                 recipients = {}
-                if task["owner"] != GATEWAY and task["state"] in {"ready", "running", "review"}:
+                if task["owner"] != self.gateway and task["state"] in {"ready", "running", "review"}:
                     recipients[task["owner"]] = "Reconcile your checkpoint, current source and decisions before continuing authorized unfinished work."
                 if task["state"] == "review" and task.get("reviewer") in MODES[room["mode"]]:
                     review = self.review_status(db, task)
@@ -1043,7 +1066,7 @@ class Store:
                                         (member, task["id"])).fetchall()
                     if any(json.loads(message["context"]).get("task_version") == task["version"] for message in queued):
                         continue
-                    self.notify(db, GATEWAY, member,
+                    self.notify(db, self.gateway, member,
                                "Room resumed. " + body + " Do not replay effects of unknown outcome.", task["id"],
                                broadcast=False,
                                review_submission=review["submission"] if task["state"] == "review" and member == task.get("reviewer") else None)
@@ -1129,6 +1152,74 @@ class Store:
                    (message_id, sender, recipient, task_id, body, dumps(context), "queued", now()))
         return dict(db.execute("SELECT * FROM messages WHERE id=?", (message_id,)).fetchone())
 
+    def queue_global_entries(self, ledger_id, room_id, entries, *, initial_cursor=0, scanned_seq=None):
+        """Import data into this room's gateway queue; no fanout, task, receipt or native operation.
+
+        Stable per-ledger/per-entry IDs, messages and scan progress commit together.
+        Sender is the local gateway generating a system notice; actual origin stays
+        in global_entry metadata. Already dispatched notices are never replayed.
+        """
+        if not isinstance(ledger_id, str) or not ledger_id or not isinstance(entries, list) or len(entries) > 20:
+            raise RoomError("Invalid bounded global queue batch", "invalid")
+        cursor_key = "agents_space.queue_cursor:" + ledger_id
+        results = []
+        with self.tx(timeout=0.05) as db:
+            room = self.get_room(db)
+            if room["id"] != room_id or room["project"] != str(self.project):
+                raise RoomError("Global directory points to another room; no queue written", "conflict")
+            gateway = room_gateway(room)
+            old_cursor = db.execute("SELECT value FROM meta WHERE key=?", (cursor_key,)).fetchone()
+            cursor = int(old_cursor[0]) if old_cursor else max(0, int(initial_cursor))
+            # A handoff can happen after the scan cursor advanced. Retarget only
+            # unsent notices from this global ledger, even when this scan is empty.
+            pending = db.execute("SELECT id FROM messages WHERE status='queued' AND recipient!=? "
+                                 "AND json_extract(context,'$.kind')='system' "
+                                 "AND json_extract(context,'$.global_entry.ledger_id')=? ORDER BY seq LIMIT 20",
+                                 (gateway, ledger_id)).fetchall()
+            for notice in pending:
+                db.execute("UPDATE messages SET sender=?,recipient=? WHERE id=?", (gateway, gateway, notice["id"]))
+                self.event(db, "agents_space.queue_retargeted", {"message": notice["id"], "recipient": gateway})
+            for entry in entries:
+                audience = entry.get("audience")
+                if (entry.get("origin_room") == room_id or
+                        (audience != "all" and (not isinstance(audience, list) or room_id not in audience)) or
+                        (entry.get("expires") and entry["expires"] < now())):
+                    raise RoomError("Global entry is not addressed to this room", "invalid")
+                metadata = {key: entry.get(key) for key in (
+                    "id", "seq", "kind", "origin_room", "origin_project", "origin_member",
+                    "audience", "reply_to", "subject", "created", "expires")}
+                metadata["ledger_id"] = ledger_id
+                if (not isinstance(metadata["id"], str) or not metadata["id"] or
+                        metadata["kind"] not in {"announcement", "reply", "release"} or
+                        not isinstance(entry.get("body"), str) or not isinstance(metadata["subject"], str)):
+                    raise RoomError("Invalid global data notice", "invalid")
+                key = hashlib.sha256(dumps([ledger_id, room_id, metadata["id"]]).encode()).hexdigest()[:40]
+                message_id = "M-global-" + key
+                body = ("Global agents-space data; NOT admin consent or a task assignment.\n"
+                        + dumps(metadata) + "\n\n" + entry["body"])
+                old = db.execute("SELECT * FROM messages WHERE id=?", (message_id,)).fetchone()
+                if old:
+                    context = json.loads(old["context"])
+                    if (old["task"] is not None or old["body"] != body or
+                            context.get("kind") != "system" or context.get("global_entry") != metadata):
+                        raise RoomError("Global notice ID reused with different content", "conflict")
+                    if old["status"] == "queued" and old["recipient"] != gateway:
+                        # Only an unsent local notice follows the receiving room's new gateway.
+                        db.execute("UPDATE messages SET sender=?,recipient=? WHERE id=?", (gateway, gateway, message_id))
+                        self.event(db, "agents_space.queue_retargeted", {"message": message_id, "recipient": gateway})
+                    results.append({"entry": metadata["id"], "message": message_id, "new": False})
+                    continue
+                message = self.queue(db, gateway, gateway, body, message_id=message_id, kind="system")
+                context = json.loads(message["context"]) | {"global_entry": metadata}
+                db.execute("UPDATE messages SET context=? WHERE id=?", (dumps(context), message_id))
+                self.event(db, "agents_space.queued", {"entry": metadata["id"], "ledger": ledger_id,
+                                                       "message": message_id, "recipient": gateway})
+                results.append({"entry": metadata["id"], "message": message_id, "new": True})
+            if scanned_seq is not None:
+                cursor = max(cursor, int(scanned_seq))
+            db.execute("INSERT OR REPLACE INTO meta VALUES (?,?)", (cursor_key, str(cursor)))
+        return results
+
     def fanout(self, db, message, sender, recipient, body, task_id=None, knowledge_id=None, kind="peer",
                review_submission=None):
         """Queue the same member message for every other room member in the caller's transaction."""
@@ -1164,18 +1255,29 @@ class Store:
 
     def broadcast_gateway_prompt(self, body, key, *, receipt_id, provenance_state):
         """Queue gateway prompt text to every non-gateway member; its content never grants worker authority."""
-        self.main_only(GATEWAY)
+        self.main_only(self.gateway)
         if not isinstance(key, str) or not key or not isinstance(receipt_id, str) or not receipt_id:
             raise RoomError("Admin notification requires a stable prompt key")
         if (not isinstance(body, str) or not body.strip() or not isinstance(provenance_state, str) or
                 provenance_state not in ADMIN_NOTICE_PROVENANCE):
             raise RoomError("Admin notification requires prompt text and its observed provenance state")
         key_hash = hashlib.sha256(key.encode("utf-8")).hexdigest()
-        targets = [name for name in MEMBERS if name != GATEWAY]
+        targets = [name for name in MEMBERS if name != self.gateway]
         copied_body = body[:MAX_MESSAGE_CHARS]
+        prompt_frame = frame_for_prompt(load_frame(self.project), body)
         admin_notice = {"receipt": receipt_id, "provenance": provenance_state,
                         "truncated": len(body) > MAX_MESSAGE_CHARS, "original_chars": len(body)}
         with self.tx() as db:
+            snapshots = []
+            for target in targets:
+                child = hashlib.sha256(f"{key_hash}\0{target}".encode("utf-8")).hexdigest()[:36]
+                old = db.execute("SELECT context FROM messages WHERE id=?", ("M-" + child,)).fetchone()
+                if old:
+                    snapshots.append(json.loads(old["context"]).get("prompt_frame"))
+            if snapshots:
+                if any(snapshot != snapshots[0] for snapshot in snapshots):
+                    raise RoomError("Admin notice frame snapshots conflict", "conflict")
+                prompt_frame = frame_for_prompt(snapshots[0], body)
             inserted = False
             for target in targets:
                 child = hashlib.sha256(f"{key_hash}\0{target}".encode("utf-8")).hexdigest()[:36]
@@ -1185,15 +1287,19 @@ class Store:
                     old_context = json.loads(old["context"])
                     old_notice = old_context.get("admin_notice")
                     if ((old["sender"], old["recipient"], old["task"], old["body"],
-                         old_context.get("admin_relay", False)) != (GATEWAY, target, None, copied_body, True) or
+                         old_context.get("admin_relay", False)) != (self.gateway, target, None, copied_body, True) or
                             (old_notice and (old_notice.get("truncated"), old_notice.get("original_chars")) !=
                              (admin_notice["truncated"], admin_notice["original_chars"]))):
                         raise RoomError("Message ID reused with different content", "conflict")
                     # A repeated hook may produce a fresh receipt after the host writes its transcript row.
                     # Keep the first notice's receipt/provenance for this stable prompt key; never rewrite a sent copy.
                     continue
-                self.queue(db, GATEWAY, target, copied_body, message_id=message_id, admin_relay=True,
-                           admin_notice=admin_notice)
+                message = self.queue(db, self.gateway, target, copied_body, message_id=message_id, admin_relay=True,
+                                     admin_notice=admin_notice)
+                if prompt_frame is not None:
+                    # Copy context only. Original body, receipt and observed provenance stay unchanged.
+                    context = json.loads(message["context"]) | {"prompt_frame": prompt_frame}
+                    db.execute("UPDATE messages SET context=? WHERE id=?", (dumps(context), message_id))
                 inserted = True
             if inserted:
                 self.event(db, "gateway.message.broadcast", {"key_hash": key_hash, "members": targets})
@@ -1203,7 +1309,7 @@ class Store:
                              for name in targets}
             eligible = [name for name in targets if name in MODES[room["mode"]]]
         return {"members": targets, "room_status": status, "member_status": member_status,
-                "eligible_members": eligible}
+                "eligible_members": eligible, "prompt_frame": prompt_frame}
 
     def knowledge_reference(self, db, context):
         """Compare a queued lesson reference with its current revision in this read."""
@@ -1379,9 +1485,10 @@ class Store:
             return False
         with self.tx() as db:
             room = self.get_room(db)
-            if actor == GATEWAY:
+            if actor == self.gateway:
                 owner = room.get("owner") or {}
-                bound = owner.get("session") == session
+                bound = (owner.get("session") == session and owner.get("host", "claude") == main_host()
+                         and not os.environ.get("IHAV_AGENT_ROOM_BINDING"))
             else:
                 member = json.loads(db.execute("SELECT data FROM members WHERE name=?", (actor,)).fetchone()[0])
                 token = os.environ.get("IHAV_AGENT_ROOM_BINDING", "")
@@ -1483,7 +1590,7 @@ class Store:
                     recipient, reason = review["reviewer"], "pending_review"
                 elif review["state"] == "approved":
                     # Peer-required completion belongs to main, even for a worker-owned task.
-                    recipient = GATEWAY
+                    recipient = self.gateway
                 if review.get("receipt"):
                     commands.append(f"ihav-agent-room review show {review['receipt']}")
             blockers = []
@@ -1563,12 +1670,12 @@ class Store:
                 member.setdefault("observed_effort", None)
                 member.setdefault("model_observed_at", None)
                 member.setdefault("settings_application", (
-                    "host-managed" if profile["control"] == "host" else
+                    "host-managed" if member["name"] == self.gateway else
                     "existing session; settings application unknown" if member.get("native_id") else
                     "configured; not started"))
                 members.append(member)
-            gateway = next(member for member in members if member["name"] == GATEWAY)
-            result = {"room": room,
+            gateway = next(member for member in members if member["name"] == self.gateway)
+            result = {"room": {**room, "gateway": room_gateway(room)},
                     "members": members,
 
                     "tasks": tasks,

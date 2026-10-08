@@ -15,7 +15,8 @@ from unittest.mock import patch
 import uuid
 import zipfile
 
-from ihav_agent_room.common import PLUGIN_ROOT, process_alive, process_stamp
+from ihav_agent_room.common import MODES, PLUGIN_ROOT, process_alive, process_stamp
+from ihav_agent_room.roster import ROSTER_BY_NAME
 from ihav_agent_room.knowledge import Knowledge
 from ihav_agent_room.package import build
 from ihav_agent_room.runtime import Supervisor
@@ -27,6 +28,80 @@ from receipts import human_receipt
 FIXTURE = Path(__file__).parent / "fake_native.py"
 CLI = PLUGIN_ROOT / "bin/ihav-agent-room"
 EFFECT_AUDIT = PLUGIN_ROOT / "labs/benchmark_v2/g1_receipt_audit/effect_audit.py"
+
+
+# Budget the sequential startup operations in native.py, rather than a generic
+# 15-second predicate wait: two 20-second RPCs per Codex member, and a
+# Claude launch followed by a separate registry deadline. Registry preflight,
+# scoped/fallback scans and process inspection can extend that deadline.
+# Keep this contract explicit when native budgets change.
+FIXTURE_CLI_TIMEOUT = 35
+NATIVE_RPC_TIMEOUT = 20
+CLAUDE_LAUNCH_TIMEOUT = 25
+CLAUDE_REGISTRY_TIMEOUT = 25
+REGISTRY_CLI_TIMEOUT = 15
+PROCESS_INSPECTION_TIMEOUT = 3
+STARTUP_MARGIN = 5
+# A phase can await a queued turn and its completion, each with a native RPC
+# deadline. Eight seconds cut off valid fixture work under full-suite load.
+REVIEW_PHASE_TIMEOUT = 2 * NATIVE_RPC_TIMEOUT + STARTUP_MARGIN
+# Fault-injection tests must first reach their owned startup marker. Admit the
+# doctor's four commands, two room commands, main launch and registry scans.
+SMOKE_READY_TIMEOUT = (6 * REGISTRY_CLI_TIMEOUT + 2 * FIXTURE_CLI_TIMEOUT
+                       + CLAUDE_LAUNCH_TIMEOUT + STARTUP_MARGIN)
+# The review script owns per-phase deadlines. Its outer fixture guard must also
+# admit CLI commands, registry scans, restart, and final cleanup. This conservative
+# total bounds 18 CLI operations, eight phase waits, four registry scans, two
+# Claude stops, and cleanup/scheduling overhead. It does not retry any operation.
+REVIEW_TOTAL_TIMEOUT = (18 * FIXTURE_CLI_TIMEOUT + 8 * REVIEW_PHASE_TIMEOUT
+                        + 4 * 15 + 2 * 10 + 10)
+
+
+def fixture_diagnostics(store):
+    """Collect independently, preserving an active failure if evidence is unavailable."""
+    data = {"room": None, "members": [], "log_tails": {}, "collection_errors": []}
+    if store is None:
+        return data
+    try:
+        if store.exists():
+            status = store.status()
+            data.update(room=status["room"], members=status["members"])
+    except Exception as exc:
+        data["collection_errors"].append(f"state: {type(exc).__name__}: {exc}")
+    try:
+        paths = sorted(store.runtime.glob("*.log"))
+    except Exception as exc:
+        data["collection_errors"].append(f"logs: {type(exc).__name__}: {exc}")
+        paths = []
+    for path in paths:
+        try:
+            data["log_tails"][path.name] = path.read_text(encoding="utf-8", errors="replace")[-4000:]
+        except Exception as exc:
+            data["collection_errors"].append(f"{path.name}: {type(exc).__name__}: {exc}")
+    return data
+
+
+def fixture_processes_stopped(store):
+    """Store.status is ledger data; inspect this fixture's recorded PID/stamp pairs."""
+    data = store.status()
+    room = data["room"]
+    supervisor = room.get("supervisor") or {}
+    if supervisor.get("pid"):
+        if not supervisor.get("stamp") or process_alive(supervisor["pid"], supervisor["stamp"]):
+            return False
+    elif room["status"] not in {"stopped", "failed"}:
+        return False
+    for member in data["members"]:
+        if member.get("pid"):
+            if not member.get("stamp") or process_alive(member["pid"], member["stamp"]):
+                return False
+        elif member["status"] != "stopped":
+            return False  # A host-managed or unavailable process is not confirmed stopped.
+    return True
+
+
+def output_text(value):
+    return value.decode("utf-8", errors="replace") if isinstance(value, bytes) else value or ""
 
 
 def terminate_process_group(process, grace=3):
@@ -116,7 +191,8 @@ class RuntimeTests(unittest.TestCase):
         self.session = str(uuid.uuid4())
         self.env = dict(os.environ, PATH=str(fake_bin) + os.pathsep + os.environ["PATH"],
             FAKE_NATIVE_ROOT=str(self.root / "native"), CLAUDE_CONFIG_DIR=str(self.root / "claude-config"),
-            IHAV_AGENT_ROOM_MEMBER="CLAUDE_01", IHAV_AGENT_ROOM_SESSION_ID=self.session)
+            IHAV_AGENT_ROOM_HOST="claude", IHAV_AGENT_ROOM_MEMBER="CLAUDE_01", IHAV_AGENT_ROOM_SESSION_ID=self.session)
+        self.env.pop("CODEX_THREAD_ID", None)  # A real Codex parent is not the fixture's Claude gateway.
         self.env.pop("CLAUDE_EFFORT", None)  # Hermetic: the host's own effort must not leak into room state.
         self.main_process = subprocess.Popen([sys.executable, str(FIXTURE), "--daemon", self.session, str(self.project)],
             env=self.env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
@@ -134,11 +210,18 @@ class RuntimeTests(unittest.TestCase):
             if value:
                 return value
             time.sleep(.05)
-        self.fail(f"Timed out waiting for fixture state; last={value}")
+        self.fail(f"Timed out waiting for fixture state; timeout={timeout}; last={value}; "
+                  f"diagnostics={json.dumps(fixture_diagnostics(getattr(self, 'store', None)))}")
 
     def call(self, *args, input=None, ok=True, env=None):
-        result = subprocess.run([sys.executable, str(CLI), "--project", str(self.project), "--json", *args],
-            cwd=self.root, env=env or self.env, input=input, capture_output=True, text=True, timeout=35)
+        try:
+            result = subprocess.run([sys.executable, str(CLI), "--project", str(self.project), "--json", *args],
+                cwd=self.root, env=env or self.env, input=input, capture_output=True, text=True,
+                timeout=FIXTURE_CLI_TIMEOUT)
+        except subprocess.TimeoutExpired as exc:
+            self.fail(f"Fixture CLI timed out: args={args}; stdout={output_text(exc.stdout)!r}; "
+                      f"stderr={output_text(exc.stderr)!r}; "
+                      f"diagnostics={json.dumps(fixture_diagnostics(getattr(self, 'store', None)))}")
         try:
             data = json.loads(result.stdout)
         except ValueError:
@@ -156,7 +239,13 @@ class RuntimeTests(unittest.TestCase):
             if room["status"] == "failed":
                 self.fail(f"Startup failed: {room['error']}\n{(self.store.runtime/'supervisor.log').read_text()}")
             return room["status"] == "running"
-        self.wait(ready)
+        room = self.store.room()
+        startup_timeout = STARTUP_MARGIN + sum(
+            2 * NATIVE_RPC_TIMEOUT if ROSTER_BY_NAME[name]["host"] == "codex" else
+            (CLAUDE_LAUNCH_TIMEOUT + CLAUDE_REGISTRY_TIMEOUT
+             + 3 * REGISTRY_CLI_TIMEOUT + PROCESS_INSPECTION_TIMEOUT)
+            for name in MODES[room["mode"]] if name != self.store.gateway)
+        self.wait(ready, timeout=startup_timeout)
 
     def effects(self, kind):
         path = self.root / "native/effects.jsonl"
@@ -296,7 +385,8 @@ class RuntimeTests(unittest.TestCase):
             self.assertIsNone(attempt["processed"])
 
     def review_smoke_fixture(self, acknowledge, source_path=None, extra_peer_handoff=False,
-                             hide_registry_name=False):
+                             hide_registry_name=False, total_timeout=REVIEW_TOTAL_TIMEOUT,
+                             timeout_ready_marker=None):
         """Run the real smoke entrypoint; the test peers supply deterministic receipts."""
         project = self.root / ("smoke-with-ack" if acknowledge else "smoke-without-ack")
         project.mkdir()
@@ -305,14 +395,19 @@ class RuntimeTests(unittest.TestCase):
         script = PLUGIN_ROOT / "scripts/native_smoke.py"
         code = "import sys; p=sys.argv.pop(1); f=sys.argv.pop(1); exec(compile(open(p).read(), f, 'exec'), {'__name__':'__main__','__file__':f})"
         process = subprocess.Popen([sys.executable, "-c", code, str(source_path or script), str(script),
-            "--scenario", "review", "--execute", "--timeout", "8", "--project", str(project)],
+            "--scenario", "review", "--execute", "--timeout", str(REVIEW_PHASE_TIMEOUT), "--project", str(project)],
             env=self.env, cwd=PLUGIN_ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             start_new_session=True)
         store = Store(project)
         reviewed = set()
-        deadline = time.monotonic() + 25
+        timeout_armed = timeout_ready_marker is None
+        deadline = time.monotonic() + (total_timeout if timeout_armed else SMOKE_READY_TIMEOUT)
+        primary_error = None
         try:
             while process.poll() is None and time.monotonic() < deadline:
+                if not timeout_armed and timeout_ready_marker.is_file():
+                    timeout_armed = True
+                    deadline = time.monotonic() + total_timeout
                 messages = []
                 if store.exists():
                     with store.read() as db:
@@ -334,7 +429,18 @@ class RuntimeTests(unittest.TestCase):
                             if not (context.get("broadcast") or context.get("admin_relay")):
                                 store.acknowledge(message["recipient"], message["id"], "Fixture recipient processed the message")
                 time.sleep(.025)
-            self.assertIsNotNone(process.poll(), "Smoke fixture did not finish")
+            if process.poll() is None:
+                stdout, stderr = terminate_process_group(process)
+                diagnostics = fixture_diagnostics(store)
+                partial_report = project / "native-smoke-report.json"
+                try:
+                    retained_report = partial_report.read_text() if partial_report.is_file() else "report missing"
+                except Exception as exc:
+                    retained_report = f"report unavailable: {type(exc).__name__}: {exc}"
+                self.fail(f"Smoke fixture did not finish; total_timeout={total_timeout}; "
+                          f"fault_timeout_armed={timeout_armed}; "
+                          f"stdout={stdout!r}; stderr={stderr!r}; report={retained_report}; "
+                          f"diagnostics={json.dumps(diagnostics)}")
             stdout, stderr = process.communicate(timeout=5)
             report = json.loads((project / "native-smoke-report.json").read_text())
             if report.get("status") == "failed":
@@ -343,16 +449,47 @@ class RuntimeTests(unittest.TestCase):
                 report["launch_log_tail"] = log.read_text(encoding="utf-8", errors="replace")[-4000:] if log and log.is_file() else "launch log missing"
             self.assertEqual(len(reviewed), 2, (stdout, stderr, report))
             return process.returncode, report
+        except BaseException as exc:
+            primary_error = exc
+            raise
         finally:
-            terminate_process_group(process)
-            if store.exists():
-                session = (store.room().get("owner") or {}).get("session")
-                if session:
-                    cleanup_env = dict(self.env, IHAV_AGENT_ROOM_SESSION_ID=session)
-                    subprocess.run([sys.executable, str(CLI), "--project", str(project), "stop"],
-                        env=cleanup_env, capture_output=True, timeout=15)
-                    subprocess.run(["claude", "stop", session[:8]], cwd=project,
-                        env=cleanup_env, capture_output=True, timeout=10)
+            cleanup_errors = []
+            try:
+                terminate_process_group(process)
+            except Exception as exc:
+                cleanup_errors.append(f"process group: {type(exc).__name__}: {exc}")
+            session = None
+            try:
+                if store.exists():
+                    session = (store.room().get("owner") or {}).get("session")
+            except Exception as exc:
+                cleanup_errors.append(f"owner lookup: {type(exc).__name__}: {exc}")
+            confirmed_stopped = False
+            try:
+                if store.exists():
+                    confirmed_stopped = fixture_processes_stopped(store)
+            except Exception:
+                pass  # Missing confirmation means both backup commands still run.
+            if session and not confirmed_stopped:
+                cleanup_env = dict(self.env, IHAV_AGENT_ROOM_SESSION_ID=session)
+                for command, timeout in (
+                    ([sys.executable, str(CLI), "--project", str(project), "stop"], 15),
+                    (["claude", "stop", session[:8]], 10)):
+                    try:
+                        result = subprocess.run(command, cwd=project, env=cleanup_env,
+                                                capture_output=True, timeout=timeout)
+                        if result.returncode:
+                            cleanup_errors.append(f"{command}: exit={result.returncode}; "
+                                                  f"stdout={output_text(result.stdout)[-4000:]!r}; "
+                                                  f"stderr={output_text(result.stderr)[-4000:]!r}")
+                    except Exception as exc:
+                        cleanup_errors.append(f"{command}: {type(exc).__name__}: {exc}")
+            if cleanup_errors:
+                detail = "Smoke backup cleanup failed: " + "; ".join(cleanup_errors)
+                if primary_error is not None:
+                    primary_error.add_note(detail)
+                else:
+                    self.fail(detail)
 
     def test_review_smoke_does_not_pass_with_receipts_but_missing_acks(self):
         exit_code, report = self.review_smoke_fixture(acknowledge=False)
@@ -460,7 +597,9 @@ class RuntimeTests(unittest.TestCase):
         project.mkdir()
         (self.root / "native/hold_claude_launch").touch()
         process = subprocess.run([sys.executable, str(PLUGIN_ROOT / "scripts/native_smoke.py"),
-            "--scenario", "review", "--execute", "--timeout", "0.2", "--project", str(project)],
+            # Allow the cold fake CLI to create its child before its deliberate
+            # ten-second hold expires. A 0.2-second deadline could fire first.
+            "--scenario", "review", "--execute", "--timeout", "2", "--project", str(project)],
             env=self.env, cwd=PLUGIN_ROOT, text=True, capture_output=True, timeout=15)
         report = json.loads((project / "native-smoke-report.json").read_text())
         self.assertEqual(process.returncode, 1, (process.stdout, process.stderr, report))
